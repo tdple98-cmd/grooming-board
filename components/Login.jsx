@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { isSupabaseConfigured, supabaseHost } from "../lib/supabase";
 
 const C = {
   cream: "#F4EFE7",
@@ -24,9 +25,21 @@ export default function Login() {
     setError("");
     setSubmitting(true);
     try {
+      if (!isSupabaseConfigured) {
+        throw new Error(
+          "App is not connected to Supabase. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel, then redeploy."
+        );
+      }
       await signIn(email.trim(), password);
     } catch (err) {
-      setError(err.message || "Could not sign in. Check your email and password.");
+      const msg = err.message || "";
+      if (msg === "Failed to fetch" || msg.includes("NetworkError")) {
+        setError(
+          "Cannot reach Supabase. Check: (1) Vercel env vars are set correctly, (2) you redeployed after adding them, (3) Supabase project is not paused in the dashboard."
+        );
+      } else {
+        setError(msg || "Could not sign in. Check your email and password.");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -63,6 +76,27 @@ export default function Login() {
           Staff sign-in only. Ask your manager for an invite if you don&apos;t have an account.
         </p>
       </div>
+
+      {!isSupabaseConfigured && (
+        <div style={{
+          background: C.rose + "18",
+          border: "1px solid " + C.rose + "44",
+          borderRadius: 12,
+          padding: "12px 14px",
+          fontSize: 13,
+          color: C.rose,
+          marginTop: 20,
+          lineHeight: 1.45,
+        }}>
+          Supabase is not configured in this build. Set env vars in Vercel and redeploy.
+        </div>
+      )}
+
+      {isSupabaseConfigured && supabaseHost && (
+        <div style={{ fontSize: 11, color: C.slate, marginTop: 16, textAlign: "center" }}>
+          Backend: {supabaseHost}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} style={{ marginTop: 24 }}>
         <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Email</label>

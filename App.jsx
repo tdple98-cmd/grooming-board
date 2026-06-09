@@ -192,15 +192,15 @@ export default function App() {
   const melDate = now.toLocaleDateString("en-AU", { timeZone: "Australia/Melbourne", weekday: "long", day: "numeric", month: "long" });
   const melTime = now.toLocaleTimeString("en-AU", { timeZone: "Australia/Melbourne", hour: "numeric", minute: "2-digit", hour12: true });
 
-  if (loading) {
+  if (loading || (needsPassword && !session)) {
     return (
-      <div style={{ minHeight: "100vh", background: C.cream, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Poppins, sans-serif", color: C.slate }}>
-        Loading…
+      <div style={{ minHeight: "100vh", background: C.cream, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Poppins, sans-serif", color: C.slate, padding: 24, textAlign: "center" }}>
+        {needsPassword ? "Activating your invite…" : "Loading…"}
       </div>
     );
   }
 
-  if (needsPassword && session) return <SetPassword />;
+  if (needsPassword) return <SetPassword />;
   if (!session) return <Login />;
 
   return (

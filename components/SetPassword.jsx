@@ -13,11 +13,17 @@ const C = {
 };
 
 export default function SetPassword() {
-  const { setPassword } = useAuth();
+  const { setPassword, authIntent } = useAuth();
   const [password, setPass] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const isRecovery = authIntent === "recovery";
+  const title = isRecovery ? "Reset your password" : "Set your password";
+  const subtitle = isRecovery
+    ? "Choose a new password for your staff account."
+    : "Choose a password to finish setting up your staff account.";
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -34,7 +40,7 @@ export default function SetPassword() {
     try {
       await setPassword(password);
     } catch (err) {
-      setError(err.message || "Could not set password. Try the invite link again.");
+      setError(err.message || "Could not save password. Try the email link again.");
     } finally {
       setSubmitting(false);
     }
@@ -62,18 +68,20 @@ export default function SetPassword() {
 
       <div style={{ background: C.brown, color: C.cream, borderRadius: 20, padding: "28px 24px 32px" }}>
         <div style={{ fontSize: 9.5, letterSpacing: 3, textTransform: "uppercase", color: C.gold, fontWeight: 600 }}>
-          Welcome
+          {isRecovery ? "Password reset" : "Welcome"}
         </div>
         <div style={{ fontFamily: "Fraunces, serif", fontSize: 28, fontWeight: 600, marginTop: 4 }}>
-          Set your password
+          {title}
         </div>
         <p style={{ fontSize: 13, color: "rgba(244,239,231,0.7)", marginTop: 8, lineHeight: 1.45 }}>
-          Choose a password to finish setting up your staff account.
+          {subtitle}
         </p>
       </div>
 
       <form onSubmit={handleSubmit} style={{ marginTop: 24 }}>
-        <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>New password</label>
+        <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+          {isRecovery ? "New password" : "Password"}
+        </label>
         <input
           type="password"
           autoComplete="new-password"

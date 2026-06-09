@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { isSupabaseConfigured, supabaseHost } from "../lib/supabase";
+import { isSupabaseConfigured } from "../lib/supabase";
 
 const C = {
   cream: "#F4EFE7",
@@ -89,12 +89,6 @@ export default function Login() {
           lineHeight: 1.45,
         }}>
           Supabase is not configured in this build. Set env vars in Vercel and redeploy.
-        </div>
-      )}
-
-      {isSupabaseConfigured && supabaseHost && (
-        <div style={{ fontSize: 11, color: C.slate, marginTop: 16, textAlign: "center" }}>
-          Backend: {supabaseHost}
         </div>
       )}
 

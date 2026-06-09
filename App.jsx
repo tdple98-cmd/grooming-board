@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from "react";
+import { useAuth } from "./contexts/AuthContext.jsx";
+import Login from "./components/Login.jsx";
+import SetPassword from "./components/SetPassword.jsx";
 
 // ─────────────────────────────────────────────────────────────
 // The Poodle Specialist — GROOMING BOARD (prototype v4, foolproof)
@@ -132,6 +135,7 @@ function elapsed(since) {
 }
 
 export default function App() {
+  const { session, profile, loading, needsPassword, signOut } = useAuth();
   const [dogs, setDogs] = useState(SEED);
   const [openId, setOpenId] = useState(null);
   const [filter, setFilter] = useState("all");
@@ -187,6 +191,17 @@ export default function App() {
 
   const melDate = now.toLocaleDateString("en-AU", { timeZone: "Australia/Melbourne", weekday: "long", day: "numeric", month: "long" });
   const melTime = now.toLocaleTimeString("en-AU", { timeZone: "Australia/Melbourne", hour: "numeric", minute: "2-digit", hour12: true });
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: "100vh", background: C.cream, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Poppins, sans-serif", color: C.slate }}>
+        Loading…
+      </div>
+    );
+  }
+
+  if (needsPassword && session) return <SetPassword />;
+  if (!session) return <Login />;
 
   return (
     <div style={{ minHeight: "100vh", background: C.cream, color: C.ink, fontFamily: "Poppins, sans-serif", maxWidth: 460, margin: "0 auto", position: "relative" }}>
@@ -562,12 +577,24 @@ export default function App() {
       {showSettings && (
         <Sheet onClose={() => setShowSettings(false)}>
           <div style={{ fontFamily: "Fraunces, serif", fontSize: 24, fontWeight: 600 }}>Settings</div>
+          {profile?.display_name && (
+            <div style={{ fontSize: 13, color: C.slate, marginTop: 4, marginBottom: 12 }}>
+              Signed in as {profile.display_name}
+              {profile.groomer_name ? ` · ${profile.groomer_name}` : ""}
+            </div>
+          )}
           <Hint>Edit the quick-pick chips your team taps. Add the ones you say all day; remove the rest.</Hint>
           <SectionLabel>Today’s notes</SectionLabel>
           {TAGS.map((t) => <PresetEditor key={t.key} label={t.label} accent={t.color} chips={presets.today[t.key]} onAdd={(c) => addPreset("today", t.key, c)} onRemove={(c) => removePreset("today", t.key, c)} />)}
           <SectionLabel style={{ marginTop: 10 }}>Groom specs</SectionLabel>
           {["coat", "temperament"].map((k) => <PresetEditor key={k} label={SPECS.find((s) => s.key === k).label} chips={presets.specs[k]} onAdd={(c) => addPreset("specs", k, c)} onRemove={(c) => removePreset("specs", k, c)} />)}
-          <button onClick={() => setShowSettings(false)} style={{ width: "100%", background: C.brown, color: C.cream, border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 16 }}>Done</button>
+          <button
+            onClick={async () => { await signOut(); setShowSettings(false); }}
+            style={{ width: "100%", background: C.paper, color: C.rose, border: "1px solid " + C.rose + "55", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 16 }}
+          >
+            Sign out
+          </button>
+          <button onClick={() => setShowSettings(false)} style={{ width: "100%", background: C.brown, color: C.cream, border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 10 }}>Done</button>
         </Sheet>
       )}
     </div>

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "./contexts/AuthContext.jsx";
+import { useBoard } from "./hooks/useBoard.js";
+import { todayMelbourneDateString } from "./lib/dates.js";
 import Login from "./components/Login.jsx";
 import SetPassword from "./components/SetPassword.jsx";
 
 // ─────────────────────────────────────────────────────────────
 // The Poodle Specialist — GROOMING BOARD (prototype v4, foolproof)
-// Phone-first. Sample data only. Built to be easy to learn:
+// Phone-first. Data from Supabase (+ Square sync).
 // plain labels, big taps, one clear action per dog, guided steps.
 // ─────────────────────────────────────────────────────────────
 
@@ -29,61 +31,6 @@ const GROOMERS = ["Thanh", "Wendy", "Trang", "Michelle", "Lynn", "Sandy", "Fei",
 
 const TABS = [{ k: "today", l: "Today" }, { k: "specs", l: "Groom Specs" }, { k: "checkin", l: "Check-in" }, { k: "pickup", l: "Pickup" }];
 
-const ago = (min) => Date.now() - min * 60000;
-
-const SEED = [
-  {
-    id: "1", band: 1, dropTime: "9:00", pickTime: "11:30", owner: "Adam Mach", phone: "0423 831 102",
-    dog: "Pumpkin", weight: "1.8kg", service: "Wash & Tidy",
-    status: "ready", avatar: "🐩", bg: "#E9D9C6", groomPhoto: true, collected: false,
-    groomer: "Wendy", checkedInAt: ago(140), depositPaid: true, late: false,
-    specs: { cut: "Teddy bear face, 4mm body", coat: "Curly, fine", temperament: "Calm, easy", health: "None" },
-    today: { cut: "", watch: "", svc: "" },
-    lastVisit: { date: "21 Apr 2026", groomer: "Wendy", service: "Wash & Tidy", did: "Teddy face, #4 body, light tidy on legs. Nails done.", took: "1h 50m", note: "Very settled. No issues.", photo: true },
-  },
-  {
-    id: "2", band: 2, dropTime: "9:00", pickTime: "12:00", owner: "Sarah Nguyen", phone: "0412 555 901",
-    dog: "Luna", weight: "4.5kg", service: "Full Groom",
-    status: "grooming", avatar: "🐕", bg: "#DBCBB6", groomPhoto: false, collected: false,
-    groomer: "Trang", checkedInAt: ago(95), depositPaid: true, late: false,
-    specs: { cut: "Short all over, 6mm", coat: "Wavy, thick", temperament: "Nervous at dryer", health: "Sensitive skin — gentle wash" },
-    today: { cut: "Shorter than usual — owner away", watch: "Extra nervous today", svc: "" },
-    lastVisit: { date: "28 Apr 2026", groomer: "Trang", service: "Full Groom", did: "#6 all over, rounded face, sanitary trim. Hypoallergenic wash.", took: "2h 30m", note: "Shaky at the dryer — used low heat. Treats helped.", photo: true },
-  },
-  {
-    id: "3", band: 3, dropTime: "9:15", pickTime: "12:15", owner: "James Park", phone: "0431 220 887",
-    dog: "Teddy", weight: "8kg", service: "Full Groom",
-    status: "grooming", avatar: "🐶", bg: "#CDBB9E", groomPhoto: false, collected: false,
-    groomer: "Fei", checkedInAt: ago(80), depositPaid: false, late: false,
-    specs: { cut: "", coat: "", temperament: "", health: "" },
-    today: { cut: "", watch: "Bites during nails — muzzle", svc: "+ Teeth clean" },
-  },
-  {
-    id: "4", band: 4, dropTime: "9:15", pickTime: "11:00", owner: "Mai Tran", phone: "0400 119 332",
-    dog: "Coco", weight: "2.5kg", service: "Wash & Tidy",
-    status: "checkedin", avatar: "🦮", bg: "#E4D5C0", groomPhoto: false, collected: false,
-    groomer: "", checkedInAt: ago(20), depositPaid: true, late: false,
-    specs: { cut: "Leave ears long", coat: "Curly", temperament: "Friendly, wriggly", health: "None" },
-    today: { cut: "", watch: "", svc: "" },
-  },
-  {
-    id: "5a", band: 5, dropTime: "9:30", pickTime: "13:00", owner: "David Lee", phone: "0466 778 210",
-    dog: "Oreo", weight: "6kg", service: "Full Groom", litterId: "lee-2dogs", litterMates: "Eli",
-    status: "booked", avatar: "🐕", bg: "#DCCDB8", groomPhoto: false, collected: false,
-    groomer: "", checkedInAt: null, depositPaid: false, late: true,
-    specs: { cut: "", coat: "", temperament: "", health: "" },
-    today: { cut: "Keep short", watch: "Litter mate — don't mix up with Eli", svc: "" },
-  },
-  {
-    id: "5b", band: 5, dropTime: "9:30", pickTime: "13:00", owner: "David Lee", phone: "0466 778 210",
-    dog: "Eli", weight: "5kg", service: "Full Groom", litterId: "lee-2dogs", litterMates: "Oreo",
-    status: "booked", avatar: "🐩", bg: "#D6C4AE", groomPhoto: false, collected: false,
-    groomer: "", checkedInAt: null, depositPaid: false, late: true,
-    specs: { cut: "", coat: "", temperament: "", health: "" },
-    today: { cut: "Keep fluffy", watch: "Litter mate — don't mix up with Oreo", svc: "" },
-  },
-];
-
 const TAGS = [
   { key: "cut", label: "Cut", hint: "Today's change to the cut", color: C.gold },
   { key: "watch", label: "Watch", hint: "Anything to be careful of", color: C.rose },
@@ -96,18 +43,6 @@ const SPECS = [
   { key: "temperament", label: "Temperament" },
   { key: "health", label: "Health / allergy" },
 ];
-
-const PRESETS = {
-  today: {
-    cut: ["Teddy bear face", "Poodle face", "Puppy cut", "Shorter than usual", "Longer than usual", "Face short", "Ears long", "Shave - matted", "Tidy only"],
-    watch: ["Muzzle for nails", "Nervous / anxious", "Bites / snappy", "Senior - gentle", "Matted", "Skin irritation", "Two dogs - don't mix"],
-    svc: ["Full Groom", "Wash & Tidy", "Wednesday W&T", "+ Teeth clean", "+ Nail grind", "+ De-shed", "+ Sanitary trim", "Upgrade to Full", "Downgrade to W&T"],
-  },
-  specs: {
-    coat: ["Curly", "Wavy", "Straight", "Wool", "Fleece", "Fine / thin", "Thick / dense", "Double coat"],
-    temperament: ["Calm / easy", "Friendly, wriggly", "Nervous", "Anxious at dryer", "Snappy - care", "Senior", "Food motivated"],
-  },
-};
 
 function toggleChip(current, chip) {
   const parts = (current || "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -136,10 +71,20 @@ function elapsed(since) {
 
 export default function App() {
   const { session, profile, loading, needsPassword, signOut } = useAuth();
-  const [dogs, setDogs] = useState(SEED);
+  const {
+    dogs,
+    presets,
+    boardLoading,
+    boardError,
+    syncing,
+    update,
+    setStatus,
+    addPreset,
+    removePreset,
+    syncSquare,
+  } = useBoard(session);
   const [openId, setOpenId] = useState(null);
   const [filter, setFilter] = useState("all");
-  const [presets, setPresets] = useState(PRESETS);
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [tab, setTab] = useState("today");
@@ -153,19 +98,6 @@ export default function App() {
   }, []);
 
   const open = dogs.find((d) => d.id === openId);
-  const update = (id, patch) => setDogs((p) => p.map((d) => (d.id === id ? { ...d, ...patch } : d)));
-  const setStatus = (id, v) => setDogs((p) => p.map((d) => {
-    if (d.id !== id) return d;
-    const patch = { status: v };
-    if (v === "checkedin" && !d.checkedInAt) patch.checkedInAt = Date.now();
-    return { ...d, ...patch };
-  }));
-  const addPreset = (g, k, c) => {
-    const v = (c || "").trim(); if (!v) return;
-    setPresets((p) => ({ ...p, [g]: { ...p[g], [k]: [...p[g][k], v] } }));
-  };
-  const removePreset = (g, k, c) =>
-    setPresets((p) => ({ ...p, [g]: { ...p[g], [k]: p[g][k].filter((x) => x !== c) } }));
 
   const done = (d) => d.collected || d.status === "noshow";
   const visible = (filter === "all" ? dogs : dogs.filter((d) => d.status === filter && !d.collected))
@@ -192,10 +124,10 @@ export default function App() {
   const melDate = now.toLocaleDateString("en-AU", { timeZone: "Australia/Melbourne", weekday: "long", day: "numeric", month: "long" });
   const melTime = now.toLocaleTimeString("en-AU", { timeZone: "Australia/Melbourne", hour: "numeric", minute: "2-digit", hour12: true });
 
-  if (loading || (needsPassword && !session)) {
+  if (loading || (needsPassword && !session) || (session && boardLoading)) {
     return (
       <div style={{ minHeight: "100vh", background: C.cream, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Poppins, sans-serif", color: C.slate, padding: 24, textAlign: "center" }}>
-        {needsPassword ? "Activating your invite…" : "Loading…"}
+        {needsPassword ? "Preparing your account…" : "Loading board…"}
       </div>
     );
   }
@@ -263,12 +195,23 @@ export default function App() {
         </div>
       </div>
 
+      {boardError && (
+        <div style={{ margin: "12px 14px 0", background: C.rose + "18", border: "1px solid " + C.rose + "44", borderRadius: 12, padding: "12px 14px", fontSize: 13, color: C.rose, lineHeight: 1.4 }}>
+          {boardError}
+        </div>
+      )}
+
       {/* ===== LIST ===== */}
       <div style={{ padding: "16px 14px 40px" }}>
         {visible.length === 0 && (
           <div style={{ textAlign: "center", color: C.slate, padding: "50px 20px", fontFamily: "Fraunces, serif", fontSize: 17 }}>
-            No dogs here right now.
-            <div style={{ fontFamily: "Poppins, sans-serif", fontSize: 13, marginTop: 6 }}>Tap “All” above to see everyone.</div>
+            No appointments for today.
+            <div style={{ fontFamily: "Poppins, sans-serif", fontSize: 13, marginTop: 6, lineHeight: 1.45 }}>
+              Add an appointment in Supabase for today, or Settings → Sync from Square.
+            </div>
+            <div style={{ fontFamily: "Poppins, sans-serif", fontSize: 11, color: C.slate, marginTop: 8 }}>
+              Today (Melbourne): {todayMelbourneDateString()}
+            </div>
           </div>
         )}
 
@@ -480,7 +423,7 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                    {open.lastVisit.photo && <div style={{ fontSize: 10.5, color: C.slate, fontStyle: "italic", marginTop: 7 }}>Sample photo — live build shows the real after-shot from last visit.</div>}
+                    {open.lastVisit.photo && <div style={{ fontSize: 10.5, color: C.slate, fontStyle: "italic", marginTop: 7 }}>Photo from last visit.</div>}
                     {open.lastVisit.note && <div style={{ fontSize: 13, color: C.slate, fontStyle: "italic", marginTop: 9, lineHeight: 1.4 }}>“{open.lastVisit.note}”</div>}
                   </div>
                 ) : (
@@ -583,6 +526,13 @@ export default function App() {
               {profile.groomer_name ? ` · ${profile.groomer_name}` : ""}
             </div>
           )}
+          <button
+            onClick={syncSquare}
+            disabled={syncing}
+            style={{ width: "100%", background: syncing ? C.slate : C.gold, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 12, marginBottom: 16 }}
+          >
+            {syncing ? "Syncing from Square…" : "Sync from Square"}
+          </button>
           <Hint>Edit the quick-pick chips your team taps. Add the ones you say all day; remove the rest.</Hint>
           <SectionLabel>Today’s notes</SectionLabel>
           {TAGS.map((t) => <PresetEditor key={t.key} label={t.label} accent={t.color} chips={presets.today[t.key]} onAdd={(c) => addPreset("today", t.key, c)} onRemove={(c) => removePreset("today", t.key, c)} />)}

@@ -1,21 +1,27 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import {
-  captureAuthIntentFromUrl,
-  clearAuthIntent,
-  getAuthIntent,
+  clearAuthType,
+  getAuthType,
+  readAuthTypeFromUrl,
   requiresPasswordSetup,
 } from "../lib/authIntent";
 
 const AuthContext = createContext(null);
 
+function syncAuthType(setAuthIntent, setNeedsPassword) {
+  const type = getAuthType();
+  setAuthIntent(type);
+  setNeedsPassword(requiresPasswordSetup(type));
+}
+
 export function AuthProvider({ children }) {
-  const initialIntent = captureAuthIntentFromUrl();
+  const initialType = getAuthType();
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [needsPassword, setNeedsPassword] = useState(requiresPasswordSetup(initialIntent));
-  const [authIntent, setAuthIntent] = useState(initialIntent);
+  const [needsPassword, setNeedsPassword] = useState(requiresPasswordSetup(initialType));
+  const [authIntent, setAuthIntent] = useState(initialType);
 
   useEffect(() => {
     let mounted = true;
@@ -43,16 +49,11 @@ export function AuthProvider({ children }) {
     }
 
     async function init() {
-      const intent = getAuthIntent();
-      if (requiresPasswordSetup(intent)) {
-        setNeedsPassword(true);
-        setAuthIntent(intent);
-      }
+      syncAuthType(setAuthIntent, setNeedsPassword);
 
       let s = await resolveSession();
 
-      // Hash session may land slightly after the first getSession().
-      if (requiresPasswordSetup(intent) && !s) {
+      if (requiresPasswordSetup(getAuthType()) && !s) {
         await new Promise((r) => setTimeout(r, 300));
         s = await resolveSession();
       }
@@ -60,29 +61,29 @@ export function AuthProvider({ children }) {
       if (mounted) setLoading(false);
     }
 
-    init();
+    const onUrlChange = () => {
+      if (!mounted) return;
+      syncAuthType(setAuthIntent, setNeedsPassword);
+    };
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
+    init();
+    window.addEventListener("hashchange", onUrlChange);
+    window.addEventListener("popstate", onUrlChange);
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
       if (!mounted) return;
 
       setSession(s);
       if (s?.user) loadProfile(s.user.id);
       else setProfile(null);
-
-      const intent = getAuthIntent();
-      if (
-        event === "PASSWORD_RECOVERY" ||
-        (requiresPasswordSetup(intent) && (event === "INITIAL_SESSION" || event === "SIGNED_IN"))
-      ) {
-        setNeedsPassword(true);
-        setAuthIntent(intent);
-      }
-
+      syncAuthType(setAuthIntent, setNeedsPassword);
       setLoading(false);
     });
 
     return () => {
       mounted = false;
+      window.removeEventListener("hashchange", onUrlChange);
+      window.removeEventListener("popstate", onUrlChange);
       subscription.unsubscribe();
     };
   }, []);
@@ -95,19 +96,19 @@ export function AuthProvider({ children }) {
   const setPassword = async (password) => {
     const { error } = await supabase.auth.updateUser({ password });
     if (error) throw error;
-    clearAuthIntent();
-    setNeedsPassword(false);
+    clearAuthType();
     setAuthIntent(null);
+    setNeedsPassword(false);
     window.history.replaceState({}, document.title, window.location.pathname);
   };
 
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
-    clearAuthIntent();
+    clearAuthType();
     setProfile(null);
-    setNeedsPassword(false);
-    setAuthIntent(null);
+    setAuthIntent(readAuthTypeFromUrl());
+    setNeedsPassword(requiresPasswordSetup(readAuthTypeFromUrl()));
   };
 
   return (

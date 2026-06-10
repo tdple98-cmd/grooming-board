@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { isSupabaseConfigured } from "../lib/supabase";
+import { getSupabaseConfigStatus, isSupabaseConfigured } from "../lib/supabase";
 
 const C = {
   cream: "#F4EFE7",
@@ -14,6 +14,7 @@ const C = {
 };
 
 export default function Login() {
+  const configStatus = getSupabaseConfigStatus();
   const { signIn } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -88,7 +89,13 @@ export default function Login() {
           marginTop: 20,
           lineHeight: 1.45,
         }}>
-          Supabase is not configured in this build. Set env vars in Vercel and redeploy.
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Supabase not configured in this build</div>
+          {configStatus.issues.map((issue) => (
+            <div key={issue}>• {issue}</div>
+          ))}
+          <div style={{ marginTop: 8 }}>
+            In Vercel → Environment Variables, enable both vars for <strong>Production and Preview</strong> (Preview deploys ignore Production-only vars). Then Redeploy without build cache.
+          </div>
         </div>
       )}
 

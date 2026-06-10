@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/check-vite-env.mjs && vite build",
     "preview": "vite preview",
-    "verify:env": "node scripts/verify-env.mjs"
+    "verify:env": "node scripts/verify-env.mjs",
+    "test:square": "node scripts/test-square.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

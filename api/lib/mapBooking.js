@@ -10,7 +10,7 @@ function hashColor(seed) {
 
 /** Try to pull a dog name from customer_note (e.g. "Dog: Pumpkin" or first line). */
 export function parseDogName(customerNote, customer) {
-  const note = (customerNote || "").trim();
+  const note = (customerNote || customer?.note || "").trim();
   if (note) {
     const labeled = note.match(/(?:dog|pet|puppy)\s*[:\-]\s*([^\n,]+)/i);
     if (labeled) return labeled[1].trim();
@@ -50,7 +50,7 @@ export function mapSquareBookingToRows(booking, { customer, catalogById, teamByI
   const endMs = new Date(startIso).getTime() + durationMin * 60 * 1000;
   const endIso = new Date(endMs).toISOString();
 
-  const dogName = parseDogName(booking.customer_note, customer);
+  const dogName = parseDogName(booking.customer_note || customer?.note, customer);
   const ownerName = customerDisplayName(customer);
   const phone = customer?.phone_number || "";
 

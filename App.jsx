@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "./contexts/AuthContext.jsx";
 import { useBoard } from "./hooks/useBoard.js";
-import { todayMelbourneDateString } from "./lib/dates.js";
 import Login from "./components/Login.jsx";
 import SetPassword from "./components/SetPassword.jsx";
 
@@ -207,10 +206,7 @@ export default function App() {
           <div style={{ textAlign: "center", color: C.slate, padding: "50px 20px", fontFamily: "Fraunces, serif", fontSize: 17 }}>
             No appointments for today.
             <div style={{ fontFamily: "Poppins, sans-serif", fontSize: 13, marginTop: 6, lineHeight: 1.45 }}>
-              Add an appointment in Supabase for today, or Settings → Sync from Square.
-            </div>
-            <div style={{ fontFamily: "Poppins, sans-serif", fontSize: 11, color: C.slate, marginTop: 8 }}>
-              Today (Melbourne): {todayMelbourneDateString()}
+              Settings → Sync from Square to load today&apos;s bookings.
             </div>
           </div>
         )}

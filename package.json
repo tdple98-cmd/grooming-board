@@ -5,10 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:api": "npx vercel dev --listen 5173",
     "build": "node scripts/check-vite-env.mjs && vite build",
     "preview": "vite preview",
     "verify:env": "node scripts/verify-env.mjs",
-    "test:square": "node scripts/test-square.mjs"
+    "test:square": "node scripts/test-square.mjs",
+    "seed:square": "node scripts/seed-square-sandbox.mjs",
+    "sync:square": "node scripts/sync-square.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

@@ -52,8 +52,8 @@ export async function listLocations({ environment, accessToken }) {
   return data.locations || [];
 }
 
-export async function batchRetrieveCustomers({ environment, accessToken, customerIds }) {
-  if (!customerIds.length) return {};
+export async function batchRetrieveCustomers({ environment, accessToken, customerIds = [] }) {
+  if (!customerIds?.length) return {};
   const data = await squareRequest("/v2/customers/batch-retrieve", {
     environment,
     accessToken,
@@ -65,8 +65,8 @@ export async function batchRetrieveCustomers({ environment, accessToken, custome
   return map;
 }
 
-export async function batchRetrieveCatalog({ environment, accessToken, objectIds }) {
-  if (!objectIds.length) return {};
+export async function batchRetrieveCatalog({ environment, accessToken, objectIds = [] }) {
+  if (!objectIds?.length) return {};
   const data = await squareRequest("/v2/catalog/batch-retrieve", {
     environment,
     accessToken,
@@ -78,8 +78,8 @@ export async function batchRetrieveCatalog({ environment, accessToken, objectIds
   return map;
 }
 
-export async function searchTeamMembers({ environment, accessToken, teamMemberIds }) {
-  if (!teamMemberIds.length) return {};
+export async function searchTeamMembers({ environment, accessToken, teamMemberIds = [] }) {
+  if (!teamMemberIds?.length) return {};
   const data = await squareRequest("/v2/team-members/search", {
     environment,
     accessToken,

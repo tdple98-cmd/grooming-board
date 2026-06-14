@@ -196,7 +196,10 @@ export function useBoard(session) {
         );
       }
 
-      if (!res.ok || !json?.ok) throw new Error(json?.error || "Square sync failed");
+      if (!res.ok || !json?.ok) {
+        const msg = json?.error || "Square sync failed";
+        throw new Error(json?.hint ? `${msg} ${json.hint}` : msg);
+      }
       await loadBoard();
     } catch (e) {
       setBoardError(e.message || "Square sync failed");

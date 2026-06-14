@@ -28,7 +28,9 @@ export default function Login() {
     try {
       if (!isSupabaseConfigured) {
         throw new Error(
-          "App is not connected to Supabase. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel, then redeploy."
+          import.meta.env.DEV
+            ? "Supabase is not configured locally. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.local, then restart npm run dev."
+            : "App is not connected to Supabase. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel, then redeploy."
         );
       }
       await signIn(email.trim(), password);
@@ -36,7 +38,9 @@ export default function Login() {
       const msg = err.message || "";
       if (msg === "Failed to fetch" || msg.includes("NetworkError")) {
         setError(
-          "Cannot reach Supabase. Check: (1) Vercel env vars are set correctly, (2) you redeployed after adding them, (3) Supabase project is not paused in the dashboard."
+          import.meta.env.DEV
+            ? "Cannot reach Supabase. Check .env.local has the correct URL and publishable key, restart npm run dev, and confirm the Supabase project is not paused."
+            : "Cannot reach Supabase. Check Vercel env vars, redeploy, and confirm the Supabase project is not paused."
         );
       } else {
         setError(msg || "Could not sign in. Check your email and password.");
@@ -94,7 +98,15 @@ export default function Login() {
             <div key={issue}>• {issue}</div>
           ))}
           <div style={{ marginTop: 8 }}>
-            In Vercel → Environment Variables, enable both vars for <strong>Production and Preview</strong> (Preview deploys ignore Production-only vars). Then Redeploy without build cache.
+            {import.meta.env.DEV ? (
+              <>
+                Local fix: open <strong>.env.local</strong> in the project root and set both variables from Supabase → Project Settings → API (publishable key, not secret). Then stop and run <strong>npm run dev</strong> again. Do not use <code>vercel env pull</code> for local work.
+              </>
+            ) : (
+              <>
+                In Vercel → Environment Variables, enable both vars for <strong>Production and Preview</strong>, then redeploy without build cache.
+              </>
+            )}
           </div>
         </div>
       )}

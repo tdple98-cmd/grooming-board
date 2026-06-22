@@ -28,7 +28,11 @@ export function useBoard(session) {
 
     if (apptErr) throw apptErr;
 
-    const dogIds = [...new Set((appointments || []).map((a) => a.dog_id).filter(Boolean))];
+    const todayRows = (appointments || []).filter(
+      (a) => String(a.appointment_date).slice(0, 10) === date
+    );
+
+    const dogIds = [...new Set(todayRows.map((a) => a.dog_id).filter(Boolean))];
     let visitByDog = {};
 
     if (dogIds.length) {
@@ -50,7 +54,7 @@ export function useBoard(session) {
 
     if (chipErr) throw chipErr;
 
-    setDogs((appointments || []).map((a) => rowToBoardDog(a, visitByDog[a.dog_id])));
+    setDogs(todayRows.map((a) => rowToBoardDog(a, visitByDog[a.dog_id])));
     setPresets(chipsToPresets(chipRows));
   }, [session]);
 

@@ -115,6 +115,108 @@ async function purgeStaleSquareInWindow(supabase, squareBookingIds, windowStart,
   return { removedAppointments: toRemove.length, removedDogs };
 }
 
+async function findOrCreateDog(supabase, dogPayload) {
+  const { data: matches, error } = await supabase
+    .from("dogs")
+    .select("id")
+    .eq("owner_name", dogPayload.owner_name)
+    .eq("name", dogPayload.name)
+    .limit(1);
+
+  if (error) throw error;
+  if (matches?.length) {
+    const dogId = matches[0].id;
+    await supabase.from("dogs").update({
+      phone: dogPayload.phone,
+      avatar: dogPayload.avatar,
+      bg_color: dogPayload.bg_color,
+    }).eq("id", dogId);
+    return dogId;
+  }
+
+  const { data: dogRow, error: dogErr } = await supabase
+    .from("dogs")
+    .insert(dogPayload)
+    .select("id")
+    .single();
+  if (dogErr) throw dogErr;
+  return dogRow.id;
+}
+
+async function findExistingAppointment(supabase, { squareBookingId, dogId, appointmentDate, dropTime }) {
+  const { data: bySquare, error: sqErr } = await supabase
+    .from("appointments")
+    .select("id, dog_id, status, collected, square_booking_id")
+    .eq("square_booking_id", squareBookingId)
+    .maybeSingle();
+  if (sqErr) throw sqErr;
+  if (bySquare) return bySquare;
+
+  const { data: bySlot, error: slotErr } = await supabase
+    .from("appointments")
+    .select("id, dog_id, status, collected, square_booking_id")
+    .eq("dog_id", dogId)
+    .eq("appointment_date", appointmentDate)
+    .eq("drop_time", dropTime)
+    .maybeSingle();
+  if (slotErr) throw slotErr;
+  return bySlot;
+}
+
+/** Remove duplicate rows for the same dog + date + drop time (keeps Square-backed row). */
+async function dedupeDuplicateSlots(supabase, windowStart, windowEnd, squareBookingIds) {
+  const keep = new Set(squareBookingIds);
+  const { data: appts, error } = await supabase
+    .from("appointments")
+    .select("id, dog_id, appointment_date, drop_time, square_booking_id, status, collected, dogs(name, owner_name)")
+    .gte("appointment_date", windowStart)
+    .lte("appointment_date", windowEnd);
+
+  if (error) throw error;
+
+  const groups = new Map();
+  for (const a of appts || []) {
+    const owner = a.dogs?.owner_name || "";
+    const name = a.dogs?.name || "";
+    const key = `${a.appointment_date}|${owner}|${name}|${a.drop_time}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(a);
+  }
+
+  const score = (row) => {
+    if (row.square_booking_id && keep.has(row.square_booking_id)) return 3;
+    if (["checkedin", "grooming", "ready"].includes(row.status) || row.collected) return 2;
+    if (row.square_booking_id) return 1;
+    return 0;
+  };
+
+  let removedAppointments = 0;
+  const removedDogIds = new Set();
+  for (const rows of groups.values()) {
+    if (rows.length <= 1) continue;
+    rows.sort((a, b) => score(b) - score(a));
+    for (const dup of rows.slice(1)) {
+      await supabase.from("appointments").delete().eq("id", dup.id);
+      removedAppointments++;
+      if (dup.dog_id) removedDogIds.add(dup.dog_id);
+    }
+  }
+
+  let removedDogs = 0;
+  for (const dogId of removedDogIds) {
+    const { count } = await supabase
+      .from("appointments")
+      .select("*", { count: "exact", head: true })
+      .eq("dog_id", dogId);
+    if (count === 0) {
+      await supabase.from("dogs").delete().eq("id", dogId);
+      removedDogs++;
+    }
+  }
+
+  return { removedAppointments, removedDogs };
+}
+
 export async function syncSquareToSupabase({
   accessToken,
   environment,
@@ -200,36 +302,20 @@ export async function syncSquareToSupabase({
       try {
         const customer = customersById[booking.customer_id];
         const mapped = mapSquareBookingToRows(booking, { customer, catalogById, teamById });
+        const dogId = await findOrCreateDog(supabase, mapped.dog);
 
-        const { data: existingAppt } = await supabase
-          .from("appointments")
-          .select("id, dog_id, status, collected")
-          .eq("square_booking_id", booking.id)
-          .maybeSingle();
-
-        let dogId = existingAppt?.dog_id;
-
-        if (!dogId) {
-          const { data: dogRow, error: dogErr } = await supabase
-            .from("dogs")
-            .insert(mapped.dog)
-            .select("id")
-            .single();
-          if (dogErr) throw dogErr;
-          dogId = dogRow.id;
-        } else {
-          const { error: dogUpdErr } = await supabase.from("dogs").update({
-            name: mapped.dog.name,
-            owner_name: mapped.dog.owner_name,
-            phone: mapped.dog.phone,
-          }).eq("id", dogId);
-          if (dogUpdErr) throw dogUpdErr;
-        }
+        const existingAppt = await findExistingAppointment(supabase, {
+          squareBookingId: booking.id,
+          dogId,
+          appointmentDate: mapped.appointment.appointment_date,
+          dropTime: mapped.appointment.drop_time,
+        });
 
         const apptPayload = {
           ...mapped.appointment,
           dog_id: dogId,
           band: i + 1,
+          square_booking_id: booking.id,
         };
 
         if (existingAppt) {
@@ -254,15 +340,23 @@ export async function syncSquareToSupabase({
     }
   }
 
-  let purgeResult = { removedAppointments: 0, removedDogs: 0 };
+  let purgeResult = { removedAppointments: 0, removedDogs: 0, deduped: { removedAppointments: 0, removedDogs: 0 } };
+  const windowEnd = syncDates[syncDates.length - 1];
   if (purge) {
-    const windowEnd = syncDates[syncDates.length - 1];
     purgeResult = await purgeStaleSquareInWindow(
       supabase,
       squareBookingIds,
       syncDates[0],
       windowEnd
     );
+    purgeResult.deduped = await dedupeDuplicateSlots(
+      supabase,
+      syncDates[0],
+      windowEnd,
+      squareBookingIds
+    );
+    purgeResult.removedAppointments += purgeResult.deduped.removedAppointments;
+    purgeResult.removedDogs += purgeResult.deduped.removedDogs;
   }
 
   if (fetchError) {

@@ -11,7 +11,6 @@
     "verify:env": "node scripts/verify-env.mjs",
     "test:square": "node scripts/test-square.mjs",
     "seed:square": "node scripts/seed-square-sandbox.mjs",
-    "clean:square": "node scripts/clean-square-duplicates.mjs",
     "sync:square": "node scripts/sync-square.mjs"
   },
   "dependencies": {

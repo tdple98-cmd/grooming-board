@@ -10,7 +10,6 @@
     "preview": "vite preview",
     "verify:env": "node scripts/verify-env.mjs",
     "test:square": "node scripts/test-square.mjs",
-    "seed:square": "node scripts/seed-square-sandbox.mjs",
     "sync:square": "node scripts/sync-square.mjs"
   },
   "dependencies": {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { boardDateMelbourneString, todayMelbourneDateString } from "../lib/dates";
+import { todayMelbourneDateString } from "../lib/dates";
 import { chipsToPresets, patchToDb, rowToBoardDog } from "../lib/boardData";
 
 const DEFAULT_PRESETS = {
@@ -18,7 +18,7 @@ export function useBoard(session) {
   const loadBoard = useCallback(async () => {
     if (!session) return;
     setBoardError("");
-    const date = boardDateMelbourneString();
+    const date = todayMelbourneDateString();
 
     const { data: appointments, error: apptErr } = await supabase
       .from("appointments")

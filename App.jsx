@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from "react";
-import { boardDateMelbourneString, formatBoardHeaderDate } from "./lib/dates.js";
 import { useAuth } from "./contexts/AuthContext.jsx";
 import { useBoard } from "./hooks/useBoard.js";
 import Login from "./components/Login.jsx";
@@ -117,8 +116,7 @@ export default function App() {
   };
   const dogIndex = () => visible.map((d) => d.id).indexOf(openId);
 
-  const boardDate = boardDateMelbourneString(now);
-  const melDate = formatBoardHeaderDate(boardDate);
+  const melDate = now.toLocaleDateString("en-AU", { timeZone: "Australia/Melbourne", weekday: "long", day: "numeric", month: "long" });
   const melTime = now.toLocaleTimeString("en-AU", { timeZone: "Australia/Melbourne", hour: "numeric", minute: "2-digit", hour12: true });
 
   if (loading || (needsPassword && !session) || (session && boardLoading)) {

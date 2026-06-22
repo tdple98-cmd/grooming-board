@@ -54,14 +54,16 @@ export async function listLocations({ environment, accessToken }) {
 
 export async function batchRetrieveCustomers({ environment, accessToken, customerIds = [] }) {
   if (!customerIds?.length) return {};
-  const data = await squareRequest("/v2/customers/batch-retrieve", {
+  const data = await squareRequest("/v2/customers/bulk-retrieve", {
     environment,
     accessToken,
     method: "POST",
     body: { customer_ids: customerIds },
   });
   const map = {};
-  for (const c of data.customers || []) map[c.id] = c;
+  for (const [id, resp] of Object.entries(data.responses || {})) {
+    if (resp?.customer) map[id] = resp.customer;
+  }
   return map;
 }
 
@@ -80,19 +82,12 @@ export async function batchRetrieveCatalog({ environment, accessToken, objectIds
 
 export async function searchTeamMembers({ environment, accessToken, teamMemberIds = [] }) {
   if (!teamMemberIds?.length) return {};
-  const data = await squareRequest("/v2/team-members/search", {
-    environment,
-    accessToken,
-    method: "POST",
-    body: {
-      query: {
-        filter: {
-          team_member_ids: teamMemberIds,
-        },
-      },
-    },
-  });
   const map = {};
-  for (const m of data.team_members || []) map[m.id] = m;
+  await Promise.all(
+    teamMemberIds.map(async (id) => {
+      const data = await squareRequest(`/v2/team-members/${id}`, { environment, accessToken });
+      if (data.team_member) map[id] = data.team_member;
+    })
+  );
   return map;
 }

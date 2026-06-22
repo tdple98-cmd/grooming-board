@@ -4,11 +4,7 @@ import { useBoard } from "./hooks/useBoard.js";
 import Login from "./components/Login.jsx";
 import SetPassword from "./components/SetPassword.jsx";
 
-// ─────────────────────────────────────────────────────────────
-// The Poodle Specialist — GROOMING BOARD (prototype v4, foolproof)
-// Phone-first. Data from Supabase (+ Square sync).
-// plain labels, big taps, one clear action per dog, guided steps.
-// ─────────────────────────────────────────────────────────────
+// The Poodle Specialist — Grooming Board
 
 const C = {
   cream: "#F4EFE7", paper: "#FCFAF6", brown: "#2A2420", ink: "#3D362F",

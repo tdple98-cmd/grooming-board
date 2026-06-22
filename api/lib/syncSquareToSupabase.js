@@ -15,6 +15,18 @@ function shiftMelbourneDateString(dateStr, deltaDays) {
   return melbourneDateString(new Date(utc).toISOString());
 }
 
+/** Default sync window: today + upcoming days (Melbourne). Past rows in Supabase are kept. */
+export function getDefaultSyncWindow() {
+  const totalDays = Math.max(1, parseInt(process.env.SQUARE_SYNC_DAYS || "7", 10));
+  const back = Math.max(0, parseInt(process.env.SQUARE_SYNC_DAYS_BACK || "0", 10));
+  const forward = Math.max(0, parseInt(process.env.SQUARE_SYNC_DAYS_FORWARD || String(totalDays - 1), 10));
+  const today = todayMelbourneDateString();
+  const startDate = shiftMelbourneDateString(today, -back);
+  const days = back + forward + 1;
+  const windowEnd = shiftMelbourneDateString(startDate, days - 1);
+  return { startDate, days, windowEnd, today, back, forward };
+}
+
 export function melbourneRangeBounds(startDateStr, dayCount) {
   const first = melbourneDayBounds(startDateStr);
   const lastDay = shiftMelbourneDateString(startDateStr, Math.max(0, dayCount - 1));
@@ -30,17 +42,55 @@ export function dateRangeFromStart(startDateStr, dayCount) {
   return dates;
 }
 
-async function purgeNonSquareData(supabase, squareBookingIds) {
+const SQUARE_MAX_RANGE_DAYS = 31;
+
+/** Split a multi-day window into chunks Square accepts (max 31 days each). */
+export function melbourneRangeChunks(startDateStr, dayCount) {
+  const chunks = [];
+  for (let offset = 0; offset < dayCount; offset += SQUARE_MAX_RANGE_DAYS) {
+    const days = Math.min(SQUARE_MAX_RANGE_DAYS, dayCount - offset);
+    const chunkStart = shiftMelbourneDateString(startDateStr, offset);
+    const { startAtMin, startAtMax } = melbourneRangeBounds(chunkStart, days);
+    chunks.push({ startAtMin, startAtMax, startDate: chunkStart, days });
+  }
+  return chunks;
+}
+
+async function listAllBookingsInWindow({ environment, accessToken, startDate, days, locationId }) {
+  const chunks = melbourneRangeChunks(startDate, days);
+  const byId = new Map();
+
+  for (const chunk of chunks) {
+    const batch = await listBookingsInRange({
+      environment,
+      accessToken,
+      startAtMin: chunk.startAtMin,
+      startAtMax: chunk.startAtMax,
+      locationId,
+    });
+    for (const booking of batch) {
+      byId.set(booking.id, booking);
+    }
+  }
+
+  return [...byId.values()];
+}
+
+async function purgeStaleSquareInWindow(supabase, squareBookingIds, windowStart, windowEnd) {
   const keep = new Set(squareBookingIds);
 
   const { data: appts, error } = await supabase
     .from("appointments")
-    .select("id, dog_id, square_booking_id");
+    .select("id, dog_id, square_booking_id, appointment_date")
+    .gte("appointment_date", windowStart)
+    .lte("appointment_date", windowEnd);
 
   if (error) throw error;
 
+  // Only remove Square-linked rows inside the sync window that Square no longer returned.
+  // Past days and dates outside the window are never deleted.
   const toRemove = (appts || []).filter(
-    (a) => !a.square_booking_id || !keep.has(a.square_booking_id)
+    (a) => a.square_booking_id && !keep.has(a.square_booking_id)
   );
 
   if (!toRemove.length) return { removedAppointments: 0, removedDogs: 0 };
@@ -71,14 +121,21 @@ export async function syncSquareToSupabase({
   supabaseUrl,
   serviceRoleKey,
   startDate,
-  days = 1,
+  days,
   locationId,
   purge = true,
 }) {
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const date = startDate || todayMelbourneDateString();
-  const syncDates = dateRangeFromStart(date, days);
-  const { startAtMin, startAtMax } = melbourneRangeBounds(date, days);
+  const window =
+    startDate != null || days != null
+      ? {
+          startDate: startDate || todayMelbourneDateString(),
+          days: days ?? 1,
+        }
+      : getDefaultSyncWindow();
+  const date = window.startDate;
+  const dayCount = window.days;
+  const syncDates = dateRangeFromStart(date, dayCount);
 
   const locations = await listLocations({ environment, accessToken });
   const resolvedLocationId = locationId || locations[0]?.id;
@@ -86,11 +143,11 @@ export async function syncSquareToSupabase({
   let bookings = [];
   let fetchError = null;
   try {
-    bookings = await listBookingsInRange({
+    bookings = await listAllBookingsInWindow({
       environment,
       accessToken,
-      startAtMin,
-      startAtMax,
+      startDate: date,
+      days: dayCount,
       locationId: resolvedLocationId,
     });
   } catch (err) {
@@ -120,14 +177,14 @@ export async function syncSquareToSupabase({
   const teamById = await searchTeamMembers({ environment, accessToken, teamMemberIds: teamIds });
 
   const bookingsByDate = {};
-  for (const d of syncDates) bookingsByDate[d] = [];
-
   for (const booking of bookings) {
     const d = melbourneDateString(booking.start_at);
-    if (bookingsByDate[d]) bookingsByDate[d].push(booking);
+    if (!bookingsByDate[d]) bookingsByDate[d] = [];
+    bookingsByDate[d].push(booking);
   }
 
-  for (const d of syncDates) {
+  const activeDates = Object.keys(bookingsByDate).sort();
+  for (const d of activeDates) {
     bookingsByDate[d].sort((a, b) => new Date(a.start_at) - new Date(b.start_at));
   }
 
@@ -136,7 +193,7 @@ export async function syncSquareToSupabase({
   const errors = [];
   const squareBookingIds = bookings.map((b) => b.id);
 
-  for (const d of syncDates) {
+  for (const d of activeDates) {
     const dayBookings = bookingsByDate[d] || [];
     for (let i = 0; i < dayBookings.length; i++) {
       const booking = dayBookings[i];
@@ -199,7 +256,13 @@ export async function syncSquareToSupabase({
 
   let purgeResult = { removedAppointments: 0, removedDogs: 0 };
   if (purge) {
-    purgeResult = await purgeNonSquareData(supabase, squareBookingIds);
+    const windowEnd = syncDates[syncDates.length - 1];
+    purgeResult = await purgeStaleSquareInWindow(
+      supabase,
+      squareBookingIds,
+      syncDates[0],
+      windowEnd
+    );
   }
 
   if (fetchError) {

@@ -119,8 +119,7 @@ export function useBoard(session) {
     if (!current) return;
 
     setDogs((p) => p.map((d) => (d.id === id ? { ...d, ...patch } : d)));
-    persistPatch(id, patch, current).catch((e) => {
-      console.error(e);
+    persistPatch(id, patch, current).catch(() => {
       setBoardError("Could not save changes. Refresh to retry.");
       loadBoard();
     });
@@ -177,7 +176,7 @@ export function useBoard(session) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${s?.access_token || ""}`,
         },
-        body: JSON.stringify({ date: todayMelbourneDateString() }),
+        body: JSON.stringify({}),
       });
 
       const text = await res.text();
@@ -186,19 +185,21 @@ export function useBoard(session) {
         try {
           json = JSON.parse(text);
         } catch {
-          throw new Error("Square sync returned an invalid response. Use `npx vercel dev` locally, or deploy to Vercel.");
+          throw new Error("Square sync failed. Try again.");
         }
       } else if (!res.ok) {
         throw new Error(
-          res.status === 404
-            ? "Square sync API not found. Run `npx vercel dev` locally (not `npm run dev`), or deploy the latest code to Vercel."
-            : `Square sync failed (${res.status})`
+          res.status === 401
+            ? "Sign in to sync from Square."
+            : res.status === 404
+              ? "Square sync is unavailable right now."
+              : "Square sync failed. Try again."
         );
       }
 
       if (!res.ok || !json?.ok) {
         const msg = json?.error || "Square sync failed";
-        throw new Error(json?.hint ? `${msg} ${json.hint}` : msg);
+        throw new Error(json?.hint || msg);
       }
       await loadBoard();
     } catch (e) {
@@ -219,6 +220,5 @@ export function useBoard(session) {
     addPreset,
     removePreset,
     syncSquare,
-    reloadBoard: loadBoard,
   };
 }

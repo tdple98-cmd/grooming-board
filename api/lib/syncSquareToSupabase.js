@@ -257,6 +257,8 @@ export async function syncSquareToSupabase({
     bookings = [];
   }
 
+  bookings = bookings.filter((b) => b.status === "ACCEPTED" || b.status === "PENDING");
+
   const customerIds = [...new Set(bookings.map((b) => b.customer_id).filter(Boolean))];
   const customersById = await batchRetrieveCustomers({ environment, accessToken, customerIds });
 

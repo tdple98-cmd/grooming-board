@@ -13,6 +13,7 @@ export function useBoard(session) {
   const [presets, setPresets] = useState(DEFAULT_PRESETS);
   const [boardLoading, setBoardLoading] = useState(true);
   const [boardError, setBoardError] = useState("");
+  const [boardNotice, setBoardNotice] = useState("");
   const [syncing, setSyncing] = useState(false);
 
   const loadBoard = useCallback(async () => {
@@ -102,6 +103,25 @@ export function useBoard(session) {
       if (error) throw error;
     }
 
+    if (patch.nameLocked && patch.dog?.trim() && current.squareCustomerId) {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      const res = await fetch("/api/square/pet-name", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${s?.access_token || ""}`,
+        },
+        body: JSON.stringify({
+          square_customer_id: current.squareCustomerId,
+          name: patch.dog.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error || "Saved on board but could not update Square.");
+      }
+    }
+
     if (patch.collected === true) {
       const { error } = await supabase.from("visits").insert({
         dog_id: current.dogId,
@@ -122,9 +142,10 @@ export function useBoard(session) {
     const current = dogs.find((d) => d.id === id);
     if (!current) return;
 
-    setDogs((p) => p.map((d) => (d.id === id ? { ...d, ...patch } : d)));
-    persistPatch(id, patch, current).catch(() => {
-      setBoardError("Could not save changes. Refresh to retry.");
+    const merged = { ...current, ...patch };
+    setDogs((p) => p.map((d) => (d.id === id ? merged : d)));
+    persistPatch(id, patch, merged).catch((e) => {
+      setBoardError(e.message || "Could not save changes. Refresh to retry.");
       loadBoard();
     });
   };
@@ -172,6 +193,7 @@ export function useBoard(session) {
   const syncSquare = async () => {
     setSyncing(true);
     setBoardError("");
+    setBoardNotice("");
     try {
       const { data: { session: s } } = await supabase.auth.getSession();
       const res = await fetch("/api/square/sync", {
@@ -205,8 +227,21 @@ export function useBoard(session) {
         const msg = json?.error || "Square sync failed";
         throw new Error(json?.hint || msg);
       }
+
+      const warnings = json.warnings || [];
+      if (json.bookingsFound === 0) {
+        setBoardNotice(warnings[0] || "Sync completed but found 0 bookings in Square.");
+      } else if (warnings.length) {
+        setBoardNotice(
+          `Synced ${json.upserted} appointment(s) from ${json.bookingsFound} booking(s). ${warnings.join(" ")}`
+        );
+      } else {
+        setBoardNotice(`Synced ${json.upserted} appointment(s) from ${json.bookingsFound} booking(s).`);
+      }
+
       await loadBoard();
     } catch (e) {
+      setBoardNotice("");
       setBoardError(e.message || "Square sync failed");
     } finally {
       setSyncing(false);
@@ -218,6 +253,7 @@ export function useBoard(session) {
     presets,
     boardLoading,
     boardError,
+    boardNotice,
     syncing,
     update,
     setStatus,

@@ -71,6 +71,7 @@ export default function App() {
     presets,
     boardLoading,
     boardError,
+    boardNotice,
     syncing,
     update,
     setStatus,
@@ -86,6 +87,7 @@ export default function App() {
   const [menuId, setMenuId] = useState(null);
   const [now, setNow] = useState(new Date());
   const [live, setLive] = useState(true);
+  const [petNameDraft, setPetNameDraft] = useState("");
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30000);
@@ -93,6 +95,18 @@ export default function App() {
   }, []);
 
   const open = dogs.find((d) => d.id === openId);
+
+  useEffect(() => {
+    if (open) setPetNameDraft(open.dog || "");
+  }, [openId, open?.dog]);
+
+  const savePetName = () => {
+    if (!open) return;
+    const trimmed = petNameDraft.trim();
+    if (trimmed && trimmed !== open.dog) {
+      update(open.id, { dog: trimmed, nameLocked: true });
+    }
+  };
 
   const done = (d) => d.collected || d.status === "noshow";
   const visible = (filter === "all" ? dogs : dogs.filter((d) => d.status === filter && !d.collected))
@@ -193,6 +207,12 @@ export default function App() {
       {boardError && (
         <div style={{ margin: "12px 14px 0", background: C.rose + "18", border: "1px solid " + C.rose + "44", borderRadius: 12, padding: "12px 14px", fontSize: 13, color: C.rose, lineHeight: 1.4 }}>
           {boardError}
+        </div>
+      )}
+
+      {boardNotice && !boardError && (
+        <div style={{ margin: "12px 14px 0", background: (boardNotice.includes("0 booking") ? C.amber : C.green) + "18", border: "1px solid " + (boardNotice.includes("0 booking") ? C.amber : C.green) + "44", borderRadius: 12, padding: "12px 14px", fontSize: 13, color: boardNotice.includes("0 booking") ? C.amber : C.green, lineHeight: 1.4 }}>
+          {boardNotice}
         </div>
       )}
 
@@ -362,8 +382,21 @@ export default function App() {
               <div style={{ position: "absolute", bottom: -5, right: -5, minWidth: 22, height: 22, padding: "0 5px", borderRadius: 8, background: C.brown, color: C.gold, fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2.5px solid " + C.cream, fontFamily: "Fraunces, serif" }}>{open.band}</div>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: "Fraunces, serif", fontSize: 24, fontWeight: 600 }}>{open.dog}</div>
+              <input
+                value={petNameDraft}
+                onChange={(e) => setPetNameDraft(e.target.value)}
+                onBlur={savePetName}
+                onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                placeholder="Pet name"
+                style={{ fontFamily: "Fraunces, serif", fontSize: 24, fontWeight: 600, width: "100%", background: "transparent", border: "none", borderBottom: "1.5px dashed " + C.line, padding: "2px 0 4px", color: C.brown, outline: "none" }}
+              />
               <div style={{ fontSize: 13, color: C.slate, marginTop: 2 }}>{open.owner} · {open.phone}</div>
+              {open.nameLocked && (
+                <div style={{ fontSize: 11, color: C.goldDeep, marginTop: 4 }}>
+                  Saved — won&apos;t be overwritten by Square sync
+                  {open.squareCustomerId ? " · updated in Square" : ""}
+                </div>
+              )}
             </div>
             <button onClick={() => goDog(1)} disabled={dogIndex() >= visible.length - 1} style={{ background: C.paper, border: "1px solid " + C.line, color: dogIndex() >= visible.length - 1 ? C.line : C.brown, borderRadius: 11, width: 36, height: 36, fontSize: 17, fontWeight: 700, flexShrink: 0 }}>›</button>
           </div>

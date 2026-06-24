@@ -190,8 +190,7 @@ export async function batchListCustomerCustomAttributes({ environment, accessTok
         }
 
         map[id] = attrs;
-      } catch (err) {
-        console.warn(`Square custom attributes failed for customer ${id}:`, err.message);
+      } catch {
         map[id] = [];
       }
     })

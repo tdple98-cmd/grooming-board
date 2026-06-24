@@ -358,9 +358,6 @@ export async function syncSquareToSupabase({
     accessToken,
     customerIds,
   });
-  const customersWithPetAttrs = customerIds.filter(
-    (id) => (customerCustomAttrsById[id] || []).length > 0
-  ).length;
 
   const bookingsByDate = {};
   for (const booking of bookings) {
@@ -487,11 +484,9 @@ export async function syncSquareToSupabase({
     syncDates,
     locationId: resolvedLocationId || null,
     bookingsFound: bookings.length,
-    customersWithPetAttrs,
     upserted,
     skipped,
     errors,
     purge: purgeResult,
-    environment,
   };
 }

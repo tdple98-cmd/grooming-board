@@ -107,11 +107,6 @@ export default async function handler(req, res) {
         `No bookings found in Square for the next ${result.syncDates?.length || 7} days. Check Square Appointments or your sync window.`
       );
     }
-    if (result.bookingsFound > 0 && result.customersWithPetAttrs === 0) {
-      warnings.push(
-        `Found ${result.bookingsFound} booking(s) but no pet custom attributes from Square. If testing locally, set SQUARE_ENVIRONMENT=production with the live token — sandbox customers have no dog_name fields.`
-      );
-    }
     if (result.skipped > 0) {
       warnings.push(`${result.skipped} booking(s) could not be saved.`);
     }
@@ -127,8 +122,6 @@ export default async function handler(req, res) {
       skipped: result.skipped,
       windowDays: result.syncDates?.length,
       warnings,
-      environment: config.environment,
-      customersWithPetAttrs: result.customersWithPetAttrs,
     });
   } catch (err) {
     console.error("Square sync error:", err);

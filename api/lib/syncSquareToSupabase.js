@@ -1,12 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
 import {
+  batchListCustomerCustomAttributes,
   batchRetrieveCatalog,
   batchRetrieveCustomers,
   listBookingsInRange,
   listLocations,
   searchTeamMembers,
 } from "./square.js";
-import { mapSquareBookingToRows } from "./mapBooking.js";
+import { isGenericPetName, mapSquareBookingToRows } from "./mapBooking.js";
 import { melbourneDayBounds, melbourneDateString, todayMelbourneDateString } from "./melbourne.js";
 
 function shiftMelbourneDateString(dateStr, deltaDays) {
@@ -115,32 +116,103 @@ async function purgeStaleSquareInWindow(supabase, squareBookingIds, windowStart,
   return { removedAppointments: toRemove.length, removedDogs };
 }
 
-async function findOrCreateDog(supabase, dogPayload) {
-  const { data: matches, error } = await supabase
-    .from("dogs")
-    .select("id")
-    .eq("owner_name", dogPayload.owner_name)
-    .eq("name", dogPayload.name)
-    .limit(1);
+const OPTIONAL_DOG_COLUMNS = ["name_locked", "square_customer_id"];
 
+function isMissingColumnError(err) {
+  const msg = err?.message || "";
+  return OPTIONAL_DOG_COLUMNS.some((col) => msg.includes(col));
+}
+
+function baseDogRow(dogPayload) {
+  return {
+    name: dogPayload.name,
+    owner_name: dogPayload.owner_name,
+    phone: dogPayload.phone ?? null,
+    avatar: dogPayload.avatar ?? "🐕",
+    bg_color: dogPayload.bg_color ?? null,
+    weight: dogPayload.weight || null,
+    specs: dogPayload.specs ?? undefined,
+  };
+}
+
+function fullDogRow(dogPayload) {
+  const row = baseDogRow(dogPayload);
+  if (dogPayload.square_customer_id) row.square_customer_id = dogPayload.square_customer_id;
+  return row;
+}
+
+async function readDogNameLocked(supabase, dogId) {
+  const { data, error } = await supabase
+    .from("dogs")
+    .select("name_locked")
+    .eq("id", dogId)
+    .maybeSingle();
+  if (error) {
+    if (isMissingColumnError(error)) return false;
+    throw error;
+  }
+  return Boolean(data?.name_locked);
+}
+
+async function insertDogRow(supabase, dogPayload) {
+  let { data, error } = await supabase.from("dogs").insert(fullDogRow(dogPayload)).select("id").single();
+  if (error && isMissingColumnError(error)) {
+    ({ data, error } = await supabase.from("dogs").insert(baseDogRow(dogPayload)).select("id").single());
+  }
   if (error) throw error;
-  if (matches?.length) {
-    const dogId = matches[0].id;
-    await supabase.from("dogs").update({
-      phone: dogPayload.phone,
-      avatar: dogPayload.avatar,
-      bg_color: dogPayload.bg_color,
-    }).eq("id", dogId);
-    return dogId;
+  return data.id;
+}
+
+async function updateDogRow(supabase, dogId, dogPayload, { preserveName = false } = {}) {
+  const update = {
+    phone: dogPayload.phone,
+    avatar: dogPayload.avatar,
+    bg_color: dogPayload.bg_color,
+  };
+  if (!preserveName) update.name = dogPayload.name;
+  if (dogPayload.weight) update.weight = dogPayload.weight;
+  if (dogPayload.specs) update.specs = dogPayload.specs;
+  if (dogPayload.square_customer_id) update.square_customer_id = dogPayload.square_customer_id;
+
+  let { error } = await supabase.from("dogs").update(update).eq("id", dogId);
+  if (error && isMissingColumnError(error)) {
+    delete update.square_customer_id;
+    ({ error } = await supabase.from("dogs").update(update).eq("id", dogId));
+  }
+  if (error) throw error;
+}
+
+async function findOrCreateDog(supabase, dogPayload, { squareBookingId }) {
+  const { data: existingAppt, error: apptLookupErr } = await supabase
+    .from("appointments")
+    .select("dog_id")
+    .eq("square_booking_id", squareBookingId)
+    .maybeSingle();
+  if (apptLookupErr) throw apptLookupErr;
+
+  if (existingAppt?.dog_id) {
+    const locked = await readDogNameLocked(supabase, existingAppt.dog_id);
+    await updateDogRow(supabase, existingAppt.dog_id, dogPayload, { preserveName: locked });
+    return existingAppt.dog_id;
   }
 
-  const { data: dogRow, error: dogErr } = await supabase
-    .from("dogs")
-    .insert(dogPayload)
-    .select("id")
-    .single();
-  if (dogErr) throw dogErr;
-  return dogRow.id;
+  if (!isGenericPetName(dogPayload.name)) {
+    const { data: matches, error } = await supabase
+      .from("dogs")
+      .select("id")
+      .eq("owner_name", dogPayload.owner_name)
+      .eq("name", dogPayload.name)
+      .limit(1);
+    if (error) throw error;
+    if (matches?.length) {
+      const dogId = matches[0].id;
+      const locked = await readDogNameLocked(supabase, dogId);
+      await updateDogRow(supabase, dogId, dogPayload, { preserveName: locked });
+      return dogId;
+    }
+  }
+
+  return insertDogRow(supabase, dogPayload);
 }
 
 async function findExistingAppointment(supabase, { squareBookingId, dogId, appointmentDate, dropTime }) {
@@ -178,7 +250,9 @@ async function dedupeDuplicateSlots(supabase, windowStart, windowEnd, squareBook
   for (const a of appts || []) {
     const owner = a.dogs?.owner_name || "";
     const name = a.dogs?.name || "";
-    const key = `${a.appointment_date}|${owner}|${name}|${a.drop_time}`;
+    const key = a.square_booking_id
+      ? `sq:${a.square_booking_id}`
+      : `${a.appointment_date}|${owner}|${name}|${a.drop_time}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(a);
   }
@@ -279,6 +353,14 @@ export async function syncSquareToSupabase({
     ),
   ];
   const teamById = await searchTeamMembers({ environment, accessToken, teamMemberIds: teamIds });
+  const customerCustomAttrsById = await batchListCustomerCustomAttributes({
+    environment,
+    accessToken,
+    customerIds,
+  });
+  const customersWithPetAttrs = customerIds.filter(
+    (id) => (customerCustomAttrsById[id] || []).length > 0
+  ).length;
 
   const bookingsByDate = {};
   for (const booking of bookings) {
@@ -295,46 +377,69 @@ export async function syncSquareToSupabase({
   let upserted = 0;
   let skipped = 0;
   const errors = [];
-  const squareBookingIds = bookings.map((b) => b.id);
+  const squareBookingIds = [...new Set(
+    bookings.flatMap((booking) => {
+      const customer = customersById[booking.customer_id];
+      const customerCustomAttributes = customerCustomAttrsById[booking.customer_id] || [];
+      const rows = mapSquareBookingToRows(booking, {
+        customer,
+        catalogById,
+        teamById,
+        customerCustomAttributes,
+      });
+      return [booking.id, ...rows.map((r) => r.appointment.square_booking_id).filter(Boolean)];
+    })
+  )];
 
   for (const d of activeDates) {
     const dayBookings = bookingsByDate[d] || [];
-    for (let i = 0; i < dayBookings.length; i++) {
-      const booking = dayBookings[i];
+    let dayBand = 0;
+    for (const booking of dayBookings) {
       try {
         const customer = customersById[booking.customer_id];
-        const mapped = mapSquareBookingToRows(booking, { customer, catalogById, teamById });
-        const dogId = await findOrCreateDog(supabase, mapped.dog);
-
-        const existingAppt = await findExistingAppointment(supabase, {
-          squareBookingId: booking.id,
-          dogId,
-          appointmentDate: mapped.appointment.appointment_date,
-          dropTime: mapped.appointment.drop_time,
+        const customerCustomAttributes = customerCustomAttrsById[booking.customer_id] || [];
+        const mappedRows = mapSquareBookingToRows(booking, {
+          customer,
+          catalogById,
+          teamById,
+          customerCustomAttributes,
         });
 
-        const apptPayload = {
-          ...mapped.appointment,
-          dog_id: dogId,
-          band: i + 1,
-          square_booking_id: booking.id,
-        };
+        for (const mapped of mappedRows) {
+          dayBand++;
+          const squareBookingId = mapped.appointment.square_booking_id;
+          const dogId = await findOrCreateDog(supabase, mapped.dog, { squareBookingId });
 
-        if (existingAppt) {
-          const preserveStatus = existingAppt.collected ||
-            ["checkedin", "grooming", "ready"].includes(existingAppt.status);
-          if (preserveStatus) delete apptPayload.status;
-          const { error: updErr } = await supabase
-            .from("appointments")
-            .update(apptPayload)
-            .eq("id", existingAppt.id);
-          if (updErr) throw updErr;
-        } else {
-          const { error: insErr } = await supabase.from("appointments").insert(apptPayload);
-          if (insErr) throw insErr;
+          const existingAppt = await findExistingAppointment(supabase, {
+            squareBookingId,
+            dogId,
+            appointmentDate: mapped.appointment.appointment_date,
+            dropTime: mapped.appointment.drop_time,
+          });
+
+          const apptPayload = {
+            ...mapped.appointment,
+            dog_id: dogId,
+            band: dayBand,
+            square_booking_id: squareBookingId,
+          };
+
+          if (existingAppt) {
+            const preserveStatus =
+              existingAppt.collected || ["checkedin", "grooming", "ready"].includes(existingAppt.status);
+            if (preserveStatus) delete apptPayload.status;
+            const { error: updErr } = await supabase
+              .from("appointments")
+              .update(apptPayload)
+              .eq("id", existingAppt.id);
+            if (updErr) throw updErr;
+          } else {
+            const { error: insErr } = await supabase.from("appointments").insert(apptPayload);
+            if (insErr) throw insErr;
+          }
+
+          upserted++;
         }
-
-        upserted++;
       } catch (e) {
         errors.push({ bookingId: booking.id, message: e.message });
         skipped++;
@@ -382,9 +487,11 @@ export async function syncSquareToSupabase({
     syncDates,
     locationId: resolvedLocationId || null,
     bookingsFound: bookings.length,
+    customersWithPetAttrs,
     upserted,
     skipped,
     errors,
     purge: purgeResult,
+    environment,
   };
 }

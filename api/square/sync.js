@@ -97,7 +97,27 @@ export default async function handler(req, res) {
         ok: false,
         error: result.squareFetchError || "Square sync failed",
         hint: squareFetchHint(result.squareFetchError || ""),
+        environment: config.environment,
       });
+    }
+
+    const warnings = [];
+    if (result.bookingsFound === 0) {
+      warnings.push(
+        `No bookings found in Square for the next ${result.syncDates?.length || 7} days. Check Square Appointments or your sync window.`
+      );
+    }
+    if (result.bookingsFound > 0 && result.customersWithPetAttrs === 0) {
+      warnings.push(
+        `Found ${result.bookingsFound} booking(s) but no pet custom attributes from Square. If testing locally, set SQUARE_ENVIRONMENT=production with the live token — sandbox customers have no dog_name fields.`
+      );
+    }
+    if (result.skipped > 0) {
+      warnings.push(`${result.skipped} booking(s) could not be saved.`);
+    }
+    if (result.errors?.length) {
+      const detail = result.errors.slice(0, 2).map((e) => e.message).join(" ");
+      if (detail) warnings.push(detail);
     }
 
     return res.status(200).json({
@@ -106,6 +126,9 @@ export default async function handler(req, res) {
       bookingsFound: result.bookingsFound,
       skipped: result.skipped,
       windowDays: result.syncDates?.length,
+      warnings,
+      environment: config.environment,
+      customersWithPetAttrs: result.customersWithPetAttrs,
     });
   } catch (err) {
     console.error("Square sync error:", err);

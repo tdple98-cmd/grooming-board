@@ -2,24 +2,145 @@ import { melbourneDateString, melbourneTimeString } from "./melbourne.js";
 
 const BG_COLORS = ["#E9D9C6", "#DBCBB6", "#CDBB9E", "#E4D5C0", "#DCCDB8", "#D6C4AE"];
 
+/** Square customer custom attribute keys (The Poodle Specialist). */
+export const DOG_NAME_KEY = "dog_name";
+export const PET_NAME_INTAKE_KEY = "square:cdd3e144-5bdd-41e5-81b2-103b90dd284d";
+
+const WEIGHT_SUFFIX_RE =
+  /\s+(?:\d+(?:\.\d+)?\s*(?:kg|kgs?)|under\s+\d+\s*kgs?)\s*$/i;
+
 function hashColor(seed) {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   return BG_COLORS[h % BG_COLORS.length];
 }
 
-/** Try to pull a dog name from customer_note (e.g. "Dog: Pumpkin" or first line). */
-export function parseDogName(customerNote, customer) {
-  const note = (customerNote || customer?.note || "").trim();
-  if (note) {
-    const labeled = note.match(/(?:dog|pet|puppy)\s*[:\-]\s*([^\n,]+)/i);
-    if (labeled) return labeled[1].trim();
-    const firstLine = note.split("\n")[0].trim();
-    if (firstLine && firstLine.length < 40) return firstLine;
+function attrValue(attr) {
+  if (attr == null) return "";
+  if (typeof attr === "string") return attr.trim();
+  const raw = attr.value ?? attr.string_value ?? attr.custom_attribute?.value;
+  if (raw == null) return "";
+  return String(raw).trim();
+}
+
+/** Build a key → value map from ListCustomerCustomAttributes results. */
+export function customerAttrsByKey(customerCustomAttributes) {
+  const map = {};
+  for (const attr of customerCustomAttributes || []) {
+    const key = attr.key || attr.custom_attribute?.key;
+    if (!key) continue;
+    const val = attrValue(attr);
+    if (!val) continue;
+
+    map[key] = val;
+
+    if (key === DOG_NAME_KEY || key.endsWith(`:${DOG_NAME_KEY}`) || /(^|:)dog_name$/i.test(key)) {
+      map[DOG_NAME_KEY] = val;
+    }
+    if (
+      key === PET_NAME_INTAKE_KEY ||
+      key.includes("cdd3e144-5bdd-41e5-81b2-103b90dd284d")
+    ) {
+      map[PET_NAME_INTAKE_KEY] = val;
+    }
+
+    const defName = (attr.definition?.name || "").toLowerCase();
+    if (defName.includes("dog name")) map[DOG_NAME_KEY] = val;
+    if (defName.includes("pet's name") || defName.includes("pets name")) {
+      map[PET_NAME_INTAKE_KEY] = val;
+    }
   }
+  return map;
+}
+
+export function stripWeightFromPetName(text) {
+  let s = String(text || "").trim();
+  while (WEIGHT_SUFFIX_RE.test(s)) {
+    s = s.replace(WEIGHT_SUFFIX_RE, "").trim();
+  }
+  return s;
+}
+
+function extractWeightFromIntake(intakeText) {
+  if (!intakeText) return "";
+  const m = String(intakeText).match(/(\d+(?:\.\d+)?\s*(?:kg|kgs?)|under\s+\d+\s*kgs?)/i);
+  return m ? m[1].trim() : "";
+}
+
+function cleanPetName(raw) {
+  const s = stripWeightFromPetName(String(raw || "").trim());
+  if (!s || s.length > 60) return "";
+  return s.replace(/^\(\d+\s*dogs?\)\s*/i, "").trim();
+}
+
+/** Names that should not be treated as real pet names from Square. */
+export function isGenericPetName(name, customer) {
+  if (!name) return true;
+  const lower = name.toLowerCase().trim();
+  if (["pet", "pets", "dog", "dogs", "puppy", "puppies", "animal", "animals"].includes(lower)) return true;
+  if (/'s pet$/i.test(name) || /'s dog$/i.test(name)) return true;
+  if (/^\d+\s*dogs?$/i.test(name)) return true;
+  const given = customer?.given_name?.trim().toLowerCase();
+  if (given && (lower === `${given} dogs` || lower === `${given}'s dogs` || lower === `${given}'s dog`)) {
+    return true;
+  }
+  return false;
+}
+
+function splitMultiPetNames(text, customer) {
+  if (!text?.trim()) return [];
+  const cleaned = stripWeightFromPetName(text.trim());
+  const parts = cleaned.split(/\s*(?:,|&|\band\b|\/|\|)\s*/i);
+  const names = [];
+  for (const part of parts) {
+    const name = cleanPetName(part);
+    if (name && !isGenericPetName(name, customer)) {
+      if (!names.some((n) => n.toLowerCase() === name.toLowerCase())) names.push(name);
+    }
+  }
+  return names;
+}
+
+function ownerDogFallback(customer) {
   const given = customer?.given_name?.trim();
-  if (given) return `${given}'s pet`;
-  return "Pet";
+  return given ? `${given}'s dog` : "Dog";
+}
+
+/**
+ * Resolve pet name(s) from Square customer custom attributes (priority order from client).
+ * 1. dog_name
+ * 2. Pet's Name intake field (strip weight)
+ * 3. "[owner]'s dog"
+ */
+export function parseDogNames({ customer, customerCustomAttributes }) {
+  const byKey = customerAttrsByKey(customerCustomAttributes);
+
+  const fromDogName = splitMultiPetNames(byKey[DOG_NAME_KEY], customer);
+  if (fromDogName.length) return fromDogName;
+
+  const fromIntake = splitMultiPetNames(byKey[PET_NAME_INTAKE_KEY], customer);
+  if (fromIntake.length) return fromIntake;
+
+  return [ownerDogFallback(customer)];
+}
+
+/** Map bonus Square customer custom attributes to board dog fields. */
+export function mapDogFieldsFromCustomerAttrs(customerCustomAttributes) {
+  const byKey = customerAttrsByKey(customerCustomAttributes);
+
+  const weight =
+    byKey.dog_weight?.trim() ||
+    extractWeightFromIntake(byKey[PET_NAME_INTAKE_KEY]) ||
+    "";
+
+  const specs = {
+    cut: byKey.preferred_cut?.trim() || "",
+    coat: byKey.coat_type?.trim() || "",
+    temperament: byKey.temperament?.trim() || "",
+    health: byKey.health_alerts?.trim() || "",
+  };
+
+  return { weight, specs };
 }
 
 export function customerDisplayName(customer) {
@@ -28,7 +149,13 @@ export function customerDisplayName(customer) {
   return parts.join(" ") || customer.email_address || "Unknown owner";
 }
 
-export function mapSquareBookingToRows(booking, { customer, catalogById, teamById }) {
+function squareBookingKey(bookingId, petIndex, total) {
+  if (total <= 1) return bookingId;
+  return petIndex === 0 ? bookingId : `${bookingId}#${petIndex + 1}`;
+}
+
+/** Map one Square booking to one or more board rows (one per pet when name lists multiple). */
+export function mapSquareBookingToRows(booking, { customer, catalogById, teamById, customerCustomAttributes }) {
   const segments = booking.appointment_segments || [];
   const primary = segments[0] || {};
   const durationMin = segments.reduce((sum, s) => sum + (s.duration_minutes || 0), 0) || 60;
@@ -41,42 +168,49 @@ export function mapSquareBookingToRows(booking, { customer, catalogById, teamByI
     "Grooming appointment";
 
   const teamMember = primary.team_member_id ? teamById[primary.team_member_id] : null;
-  const groomer =
-    teamMember?.given_name ||
-    teamMember?.family_name ||
-    "";
+  const groomer = teamMember?.given_name || teamMember?.family_name || "";
 
   const startIso = booking.start_at;
   const endMs = new Date(startIso).getTime() + durationMin * 60 * 1000;
   const endIso = new Date(endMs).toISOString();
 
-  const dogName = parseDogName(booking.customer_note || customer?.note, customer);
+  const petNames = parseDogNames({ customer, customerCustomAttributes });
+  const { weight, specs } = mapDogFieldsFromCustomerAttrs(customerCustomAttributes);
   const ownerName = customerDisplayName(customer);
   const phone = customer?.phone_number || "";
 
-  return {
-    dog: {
-      name: dogName,
-      owner_name: ownerName,
-      phone,
-      avatar: "🐕",
-      bg_color: hashColor(booking.customer_id || booking.id),
-    },
-    appointment: {
-      square_booking_id: booking.id,
-      appointment_date: melbourneDateString(startIso),
-      drop_time: melbourneTimeString(startIso),
-      pick_time: melbourneTimeString(endIso),
-      service: serviceName,
-      status: booking.status === "CANCELLED_BY_CUSTOMER" || booking.status === "CANCELLED_BY_SELLER"
+  const baseDog = {
+    owner_name: ownerName,
+    phone,
+    avatar: "🐕",
+    bg_color: hashColor(booking.customer_id || booking.id),
+    square_customer_id: booking.customer_id || null,
+    weight,
+    specs,
+  };
+
+  const baseAppointment = {
+    appointment_date: melbourneDateString(startIso),
+    drop_time: melbourneTimeString(startIso),
+    pick_time: melbourneTimeString(endIso),
+    service: serviceName,
+    status:
+      booking.status === "CANCELLED_BY_CUSTOMER" || booking.status === "CANCELLED_BY_SELLER"
         ? "noshow"
         : "booked",
-      groomer: groomer || "",
-      deposit_paid: false,
-      late: false,
-      collected: false,
-      today_notes: { cut: "", watch: "", svc: "" },
+    groomer: groomer || "",
+    deposit_paid: false,
+    late: false,
+    collected: false,
+    today_notes: { cut: "", watch: "", svc: "" },
+  };
+
+  return petNames.map((name, index) => ({
+    dog: { ...baseDog, name },
+    appointment: {
+      ...baseAppointment,
+      square_booking_id: squareBookingKey(booking.id, index, petNames.length),
     },
     squareStatus: booking.status,
-  };
+  }));
 }

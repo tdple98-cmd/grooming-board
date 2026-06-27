@@ -5,6 +5,9 @@
   "functions": {
     "api/admin/reset-and-sync.js": {
       "maxDuration": 300
+    },
+    "api/square/sync.js": {
+      "maxDuration": 300
     }
   },
   "crons": [

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { todayMelbourneDateString, formatVisitDate } from "../lib/dates";
+import { todayMelbourneDateString, formatVisitDate, historySyncChunks } from "../lib/dates";
 import { chipsToPresets, patchToDb, rowToBoardDog } from "../lib/boardData";
 import { uploadGroomPhoto, getGroomPhotoDisplayUrl, signPhotoPathMap } from "../lib/groomPhotos.js";
 import { computeDueToRebook, dueEntryToBoardDog } from "../lib/dueToRebook.js";
@@ -442,35 +442,74 @@ export function useBoard(session) {
     setBoardNotice("");
     try {
       const { data: { session: s } } = await supabase.auth.getSession();
-      const res = await fetch("/api/admin/reset-and-sync", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${s?.access_token || ""}`,
-        },
-        body: JSON.stringify(dryRun ? { dry_run: true } : { confirm: "RESET" }),
-      });
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) {
-        throw new Error(json.error || "Board reset failed");
-      }
+      const authHeaders = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${s?.access_token || ""}`,
+      };
 
       if (dryRun) {
+        const res = await fetch("/api/admin/reset-and-sync", {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({ dry_run: true }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json.ok) {
+          throw new Error(json.error || "Board reset failed");
+        }
         const b = json.before;
         setBoardNotice(
           `Dry run: would remove ${b.appointments} appointments, ${b.dogs} dogs, ${b.visits} visits, ${b.groomPhotos} photos. Staff (${b.staff}) and presets (${b.presets}) kept.`
         );
-      } else {
-        const sync = json.sync;
-        setBoardNotice(
-          sync
-            ? `Reset complete. Synced ${sync.upserted} appointments from ${sync.bookingsFound} Square bookings (${sync.window?.startDate} → ${sync.window?.windowEnd}).`
-            : "Reset complete."
-        );
-        if (boardMode === "due") await loadDueDogs();
-        else await loadBoard();
+        return;
       }
+
+      setBoardNotice("Wiping board data…");
+      const wipeRes = await fetch("/api/admin/reset-and-sync", {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ confirm: "RESET", sync: false }),
+      });
+      const wipeJson = await wipeRes.json().catch(() => ({}));
+      if (!wipeRes.ok || !wipeJson.ok) {
+        throw new Error(wipeJson.error || "Board reset failed");
+      }
+
+      const { startDate, windowEnd, chunks } = historySyncChunks({ back: 90, forward: 7, chunkDays: 30 });
+      let bookingsFound = 0;
+      let upserted = 0;
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        setBoardNotice(`Syncing from Square (${i + 1}/${chunks.length}): ${chunk.date}…`);
+
+        const syncRes = await fetch("/api/square/sync", {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({
+            mode: "history",
+            date: chunk.date,
+            days: chunk.days,
+            purge: false,
+          }),
+        });
+        const syncJson = await syncRes.json().catch(() => ({}));
+        if (!syncRes.ok || !syncJson?.ok) {
+          throw new Error(
+            syncJson?.hint ||
+              syncJson?.error ||
+              `Square sync failed on chunk ${i + 1}/${chunks.length} (${chunk.date}).`
+          );
+        }
+        bookingsFound += syncJson.bookingsFound ?? 0;
+        upserted += syncJson.upserted ?? 0;
+      }
+
+      setBoardNotice(
+        `Reset complete. Synced ${upserted} appointments from ${bookingsFound} Square bookings (${startDate} → ${windowEnd}).`
+      );
+      if (boardMode === "due") await loadDueDogs();
+      else await loadBoard();
     } catch (e) {
       setBoardError(e.message || "Board reset failed");
     } finally {

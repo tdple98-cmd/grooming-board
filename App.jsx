@@ -684,7 +684,7 @@ export default function App() {
           </button>
           <div style={{ background: C.rose + "10", border: "1px solid " + C.rose + "44", borderRadius: 14, padding: 14, marginBottom: 16 }}>
             <SectionLabel style={{ color: C.rose, marginBottom: 6 }}>Delivery cleanup (temporary)</SectionLabel>
-            <Hint>Wipes Supabase dogs, appointments, visits, and photos. Keeps staff login and preset chips. Then reloads 90 days from Square. Square is not modified.</Hint>
+            <Hint>Wipes Supabase dogs, appointments, visits, and photos. Keeps staff login and preset chips. Then reloads 90 days from Square in several steps — keep this page open until finished. Square is not modified.</Hint>
             <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
               <button
                 onClick={() => resetBoardData(true)}
@@ -702,7 +702,7 @@ export default function App() {
                 disabled={resetting || syncing}
                 style={{ flex: 1, background: resetting ? C.slate : C.rose, color: "#fff", border: "none", borderRadius: 12, padding: "12px", fontSize: 13, fontWeight: 700 }}
               >
-                {resetting ? "Resetting…" : "Reset & sync"}
+                {resetting ? "Resetting… (keep open)" : "Reset & sync"}
               </button>
             </div>
           </div>

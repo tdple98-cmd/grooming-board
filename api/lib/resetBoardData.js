@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { shiftMelbourneDateString } from "../../lib/dates.js";
 import { syncSquareToSupabase, getHistorySyncWindow } from "./syncSquareToSupabase.js";
 
 const BUCKET = "groom-photos";
@@ -102,24 +103,44 @@ export async function resetBoardAndSync({
     process.env.SQUARE_SYNC_DAYS_BACK = String(syncDaysBack);
     process.env.SQUARE_SYNC_DAYS_FORWARD = String(syncDaysForward);
     const window = getHistorySyncWindow();
-    const result = await syncSquareToSupabase({
-      accessToken,
-      environment,
-      supabaseUrl,
-      serviceRoleKey,
-      syncMode: "history",
-      purge: false,
-    });
-    if (!result.ok) {
-      const err = new Error(result.squareFetchError || "Square sync failed after wipe");
-      err.result = result;
-      throw err;
+    const chunkDays = 30;
+    const totals = { bookingsFound: 0, upserted: 0, skipped: 0, chunks: 0, chunkErrors: [] };
+
+    for (let offset = 0; offset < window.days; offset += chunkDays) {
+      const chunkStart = shiftMelbourneDateString(window.startDate, offset);
+      const days = Math.min(chunkDays, window.days - offset);
+      const result = await syncSquareToSupabase({
+        accessToken,
+        environment,
+        supabaseUrl,
+        serviceRoleKey,
+        startDate: chunkStart,
+        days,
+        purge: false,
+      });
+      totals.chunks++;
+      if (!result.ok) {
+        const err = new Error(
+          result.squareFetchError ||
+            `Square sync failed after wipe (chunk ${totals.chunks}, from ${chunkStart})`
+        );
+        err.result = { ...result, completedChunks: totals.chunks - 1, partialTotals: totals };
+        throw err;
+      }
+      totals.bookingsFound += result.bookingsFound ?? 0;
+      totals.upserted += result.upserted ?? 0;
+      totals.skipped += result.skipped ?? 0;
+      if (result.errors?.length) {
+        totals.chunkErrors.push(...result.errors.slice(0, 3));
+      }
     }
+
     sync = {
       window: { startDate: window.startDate, windowEnd: window.windowEnd, days: window.days },
-      bookingsFound: result.bookingsFound,
-      upserted: result.upserted,
-      skipped: result.skipped ?? 0,
+      bookingsFound: totals.bookingsFound,
+      upserted: totals.upserted,
+      skipped: totals.skipped,
+      chunks: totals.chunks,
     };
   }
 

@@ -184,30 +184,41 @@ export async function batchListCustomerCustomAttributes({ environment, accessTok
   const petKeys = await resolvePetAttributeKeys({ environment, accessToken });
   const retrieveKeys = [...new Set([petKeys.dogName, petKeys.intake, DOG_NAME_KEY, PET_NAME_INTAKE_KEY])];
   const map = {};
+  const concurrency = 8;
+  let index = 0;
+
+  async function fetchOne(id) {
+    try {
+      let attrs = await listCustomerCustomAttributesPaged({ environment, accessToken, customerId: id });
+
+      if (!attrs.length) {
+        const retrieved = [];
+        for (const key of retrieveKeys) {
+          retrieved.push(...(await retrieveCustomerCustomAttribute({ environment, accessToken, customerId: id, key })));
+        }
+        const seen = new Set();
+        attrs = retrieved.filter((a) => {
+          if (!a?.key || seen.has(a.key)) return false;
+          seen.add(a.key);
+          return true;
+        });
+      }
+
+      map[id] = attrs;
+    } catch {
+      map[id] = [];
+    }
+  }
+
+  async function worker() {
+    while (index < customerIds.length) {
+      const id = customerIds[index++];
+      await fetchOne(id);
+    }
+  }
 
   await Promise.all(
-    customerIds.map(async (id) => {
-      try {
-        let attrs = await listCustomerCustomAttributesPaged({ environment, accessToken, customerId: id });
-
-        if (!attrs.length) {
-          const retrieved = [];
-          for (const key of retrieveKeys) {
-            retrieved.push(...(await retrieveCustomerCustomAttribute({ environment, accessToken, customerId: id, key })));
-          }
-          const seen = new Set();
-          attrs = retrieved.filter((a) => {
-            if (!a?.key || seen.has(a.key)) return false;
-            seen.add(a.key);
-            return true;
-          });
-        }
-
-        map[id] = attrs;
-      } catch {
-        map[id] = [];
-      }
-    })
+    Array.from({ length: Math.min(concurrency, customerIds.length) }, () => worker())
   );
 
   return map;

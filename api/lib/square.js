@@ -1,6 +1,16 @@
 const SQUARE_VERSION = "2025-04-16";
+/** Square bulk/batch endpoints accept at most 100 IDs per request. */
+const SQUARE_MAX_BATCH = 100;
 
 import { DOG_NAME_KEY, PET_NAME_INTAKE_KEY } from "./mapBooking.js";
+
+function chunkIds(ids, size = SQUARE_MAX_BATCH) {
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += size) {
+    chunks.push(ids.slice(i, i + size));
+  }
+  return chunks;
+}
 
 export function squareBaseUrl(environment) {
   return environment === "production"
@@ -56,29 +66,33 @@ export async function listLocations({ environment, accessToken }) {
 
 export async function batchRetrieveCustomers({ environment, accessToken, customerIds = [] }) {
   if (!customerIds?.length) return {};
-  const data = await squareRequest("/v2/customers/bulk-retrieve", {
-    environment,
-    accessToken,
-    method: "POST",
-    body: { customer_ids: customerIds },
-  });
   const map = {};
-  for (const [id, resp] of Object.entries(data.responses || {})) {
-    if (resp?.customer) map[id] = resp.customer;
+  for (const batch of chunkIds(customerIds)) {
+    const data = await squareRequest("/v2/customers/bulk-retrieve", {
+      environment,
+      accessToken,
+      method: "POST",
+      body: { customer_ids: batch },
+    });
+    for (const [id, resp] of Object.entries(data.responses || {})) {
+      if (resp?.customer) map[id] = resp.customer;
+    }
   }
   return map;
 }
 
 export async function batchRetrieveCatalog({ environment, accessToken, objectIds = [] }) {
   if (!objectIds?.length) return {};
-  const data = await squareRequest("/v2/catalog/batch-retrieve", {
-    environment,
-    accessToken,
-    method: "POST",
-    body: { object_ids: objectIds },
-  });
   const map = {};
-  for (const obj of data.objects || []) map[obj.id] = obj;
+  for (const batch of chunkIds(objectIds)) {
+    const data = await squareRequest("/v2/catalog/batch-retrieve", {
+      environment,
+      accessToken,
+      method: "POST",
+      body: { object_ids: batch },
+    });
+    for (const obj of data.objects || []) map[obj.id] = obj;
+  }
   return map;
 }
 

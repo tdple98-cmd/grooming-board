@@ -1,3 +1,4 @@
+import { createClient } from "@supabase/supabase-js";
 import { loadEnvFiles } from "../lib/loadEnv.mjs";
 import { resetBoardAndSync } from "../lib/resetBoardData.js";
 
@@ -11,7 +12,34 @@ function parseBody(req) {
   return typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
 }
 
-/** Temporary admin route — CRON_SECRET only. Remove before final delivery. */
+async function authorize(req) {
+  const supabaseUrl = (process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "").trim();
+  const anonKey = (process.env.VITE_SUPABASE_ANON_KEY || "").trim();
+  const cronSecret = (process.env.CRON_SECRET || "").trim();
+  const token = bearerToken(req);
+
+  if (!token) {
+    const err = new Error("Sign in required");
+    err.status = 401;
+    throw err;
+  }
+
+  if (cronSecret && token === cronSecret) {
+    return { type: "cron" };
+  }
+
+  const authClient = createClient(supabaseUrl, anonKey);
+  const { data: { user }, error } = await authClient.auth.getUser(token);
+  if (error || !user) {
+    const err = new Error("Sign in required");
+    err.status = 401;
+    throw err;
+  }
+
+  return { type: "staff", user };
+}
+
+/** Temporary admin route — remove before final delivery. */
 export default async function handler(req, res) {
   loadEnvFiles();
 
@@ -19,10 +47,10 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "POST only" });
   }
 
-  const cronSecret = (process.env.CRON_SECRET || "").trim();
-  const token = bearerToken(req);
-  if (!cronSecret || token !== cronSecret) {
-    return res.status(401).json({ error: "Unauthorized" });
+  try {
+    await authorize(req);
+  } catch (err) {
+    return res.status(err.status || 401).json({ error: err.message || "Unauthorized" });
   }
 
   const body = parseBody(req);

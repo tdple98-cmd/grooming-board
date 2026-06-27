@@ -43,6 +43,7 @@ export function useBoard(session) {
   const [boardNotice, setBoardNotice] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const loadBoard = useCallback(async () => {
     if (!session) return;
@@ -435,6 +436,48 @@ export function useBoard(session) {
     }
   };
 
+  const resetBoardData = async (dryRun = false) => {
+    setResetting(true);
+    setBoardError("");
+    setBoardNotice("");
+    try {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      const res = await fetch("/api/admin/reset-and-sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${s?.access_token || ""}`,
+        },
+        body: JSON.stringify(dryRun ? { dry_run: true } : { confirm: "RESET" }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || "Board reset failed");
+      }
+
+      if (dryRun) {
+        const b = json.before;
+        setBoardNotice(
+          `Dry run: would remove ${b.appointments} appointments, ${b.dogs} dogs, ${b.visits} visits, ${b.groomPhotos} photos. Staff (${b.staff}) and presets (${b.presets}) kept.`
+        );
+      } else {
+        const sync = json.sync;
+        setBoardNotice(
+          sync
+            ? `Reset complete. Synced ${sync.upserted} appointments from ${sync.bookingsFound} Square bookings (${sync.window?.startDate} → ${sync.window?.windowEnd}).`
+            : "Reset complete."
+        );
+        if (boardMode === "due") await loadDueDogs();
+        else await loadBoard();
+      }
+    } catch (e) {
+      setBoardError(e.message || "Board reset failed");
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return {
     dogs,
     dueDogs,
@@ -453,5 +496,7 @@ export function useBoard(session) {
     removePreset,
     markCollected,
     syncSquare,
+    resetBoardData,
+    resetting,
   };
 }

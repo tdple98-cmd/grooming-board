@@ -9,3 +9,4 @@ dist
 .env.vercel.dev
 .DS_Store
 local-dev/
+.cursor/

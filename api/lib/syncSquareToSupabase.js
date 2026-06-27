@@ -54,9 +54,10 @@ export function dateRangeFromStart(startDateStr, dayCount) {
   return dates;
 }
 
-const SQUARE_MAX_RANGE_DAYS = 31;
+/** Square allows at most 31 days between start_at_min and start_at_max (wall-clock, not calendar). */
+const SQUARE_MAX_RANGE_DAYS = 30;
 
-/** Split a multi-day window into chunks Square accepts (max 31 days each). */
+/** Split a multi-day window into chunks Square accepts (max 30 Melbourne calendar days each). */
 export function melbourneRangeChunks(startDateStr, dayCount) {
   const chunks = [];
   for (let offset = 0; offset < dayCount; offset += SQUARE_MAX_RANGE_DAYS) {

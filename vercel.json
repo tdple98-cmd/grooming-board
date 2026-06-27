@@ -1,27 +1,24 @@
-{
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" }
-  ],
-  "functions": {
-    "api/admin/reset-and-sync.js": {
-      "maxDuration": 300
-    },
-    "api/square/sync.js": {
-      "maxDuration": 300
-    }
-  },
-  "crons": [
-    {
-      "path": "/api/square/sync",
-      "schedule": "0 20 * * *"
-    },
-    {
-      "path": "/api/square/sync",
-      "schedule": "0 8 * * *"
-    },
-    {
-      "path": "/api/square/sync?mode=history",
-      "schedule": "0 19 * * *"
-    }
-  ]
-}
+{
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" }
+  ],
+  "functions": {
+    "api/square/sync.js": {
+      "maxDuration": 300
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/square/sync",
+      "schedule": "0 20 * * *"
+    },
+    {
+      "path": "/api/square/sync",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/square/sync?mode=history",
+      "schedule": "0 19 * * *"
+    }
+  ]
+}

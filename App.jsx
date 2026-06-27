@@ -48,6 +48,14 @@ function toggleChip(current, chip) {
 const chipActive = (cur, chip) =>
   (cur || "").split(",").map((s) => s.trim().toLowerCase()).includes(chip.toLowerCase());
 
+function groomPhotoSrc(d) {
+  return d?.groomPhotoUrl || d?.groomPhotoPreviewUrl || null;
+}
+
+function lastVisitPhotoSrc(v, d) {
+  return v?.photoUrl || (d?.collected ? groomPhotoSrc(d) : null) || null;
+}
+
 const telHref = (p) => "tel:" + (p || "").replace(/\s+/g, "");
 const smsHref = (p, body) => "sms:" + (p || "").replace(/\s+/g, "") + "?&body=" + encodeURIComponent(body);
 const thirtyText = (d) =>
@@ -80,6 +88,7 @@ export default function App() {
     update,
     setStatus,
     uploadPhoto,
+    markCollected,
     addPreset,
     removePreset,
     syncSquare,
@@ -94,6 +103,7 @@ export default function App() {
   const [now, setNow] = useState(new Date());
   const [live, setLive] = useState(true);
   const [petNameDraft, setPetNameDraft] = useState("");
+  const [finishingPickup, setFinishingPickup] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30000);
@@ -102,6 +112,25 @@ export default function App() {
 
   const listSource = boardMode === "due" ? dueDogs : dogs;
   const open = listSource.find((d) => d.id === openId);
+
+  const finishPickupSheet = async () => {
+    const dog = listSource.find((d) => d.id === openId);
+    if (!dog || dog.readOnly) {
+      setOpenId(null);
+      return;
+    }
+    if (tab === "pickup" && !dog.collected) {
+      setFinishingPickup(true);
+      try {
+        await markCollected(dog.id);
+      } catch {
+        setFinishingPickup(false);
+        return;
+      }
+      setFinishingPickup(false);
+    }
+    setOpenId(null);
+  };
 
   const switchBoardMode = (mode) => {
     setBoardMode(mode);
@@ -492,8 +521,8 @@ export default function App() {
                       <span style={{ fontSize: 12, color: C.slate }}>{open.lastVisit.date}</span>
                     </div>
                     <div style={{ display: "flex", gap: 12 }}>
-                      {(open.lastVisit.photoUrl || open.lastVisit.photoPath) ? (
-                        <img src={open.lastVisit.photoUrl || undefined} alt="" style={{ width: 76, height: 76, borderRadius: 12, flexShrink: 0, objectFit: "cover", border: "1px solid " + C.line, background: open.bg }} />
+                      {lastVisitPhotoSrc(open.lastVisit, open) ? (
+                        <img src={lastVisitPhotoSrc(open.lastVisit, open)} alt="" style={{ width: 76, height: 76, borderRadius: 12, flexShrink: 0, objectFit: "cover", border: "1px solid " + C.line, background: open.bg }} />
                       ) : null}
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 14, color: C.ink, lineHeight: 1.45, fontWeight: 600 }}>{open.lastVisit.did}</div>
@@ -504,7 +533,7 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                    {(open.lastVisit.photoUrl || open.lastVisit.photoPath) && <div style={{ fontSize: 10.5, color: C.slate, fontStyle: "italic", marginTop: 7 }}>Photo from last visit.</div>}
+                    {lastVisitPhotoSrc(open.lastVisit, open) && <div style={{ fontSize: 10.5, color: C.slate, fontStyle: "italic", marginTop: 7 }}>Photo from last visit.</div>}
                     {open.lastVisit.note && <div style={{ fontSize: 13, color: C.slate, fontStyle: "italic", marginTop: 9, lineHeight: 1.4 }}>“{open.lastVisit.note}”</div>}
                   </div>
                 ) : (
@@ -567,17 +596,17 @@ export default function App() {
                 <div style={{ display: "flex", gap: 12 }}>
                   <div
                     onClick={() => !photoUploading && photoInputRef.current?.click()}
-                    style={{ width: 92, height: 92, borderRadius: 15, flexShrink: 0, background: open.groomPhotoUrl ? "transparent" : C.paper, border: "1.5px " + (open.groomPhotoPath ? "solid " + C.gold : "dashed " + C.line), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: 22, color: C.slate, cursor: photoUploading ? "wait" : "pointer", overflow: "hidden" }}
+                    style={{ width: 92, height: 92, borderRadius: 15, flexShrink: 0, background: groomPhotoSrc(open) ? "transparent" : C.paper, border: "1.5px " + ((open.groomPhotoPath || groomPhotoSrc(open)) ? "solid " + C.gold : "dashed " + C.line), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: 22, color: C.slate, cursor: photoUploading ? "wait" : "pointer", overflow: "hidden" }}
                   >
-                    {open.groomPhotoUrl ? (
-                      <img src={open.groomPhotoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    {groomPhotoSrc(open) ? (
+                      <img src={groomPhotoSrc(open)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
                       <><span style={{ fontSize: 24 }}>📷</span><span style={{ fontSize: 10, marginTop: 3, fontWeight: 600 }}>{photoUploading ? "…" : "Add"}</span></>
                     )}
                   </div>
                   <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 8 }}>
-                    {open.groomPhotoUrl
-                      ? <a href={smsHref(open.phone, photoText(open, open.groomPhotoUrl))} style={{ ...bigBtn(C.green), textDecoration: "none", textAlign: "center", padding: "12px" }}>✉ Send photo link</a>
+                    {groomPhotoSrc(open)
+                      ? <a href={smsHref(open.phone, photoText(open, open.groomPhotoUrl?.startsWith("http") ? open.groomPhotoUrl : "[link]"))} style={{ ...bigBtn(C.green), textDecoration: "none", textAlign: "center", padding: "12px" }}>✉ Send photo link</a>
                       : <span style={{ fontSize: 12.5, color: C.slate, fontStyle: "italic" }}>Tap the box to add a photo.</span>}
                   </div>
                 </div>
@@ -585,7 +614,7 @@ export default function App() {
             )}
           </div>
 
-          <div style={{ position: "sticky", bottom: 0, margin:" 16px -20px 0", padding: "12px 20px calc(12px + env(safe-area-inset-bottom))", background: "rgba(244,239,231,0.92)", backdropFilter: "blur(8px)", borderTop: "1px solid " + C.line, display: "flex", gap: 10, zIndex: 5 }}>
+          <div style={{ margin: "20px -20px 0", padding: "14px 20px calc(8px + env(safe-area-inset-bottom))", borderTop: "1px solid " + C.line, display: "flex", gap: 10 }}>
             {open.readOnly ? (
               <button onClick={() => setOpenId(null)} style={{ flex: 1, background: C.brown, color: C.cream, border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700 }}>✓ Done</button>
             ) : (
@@ -596,7 +625,13 @@ export default function App() {
             {TABS.findIndex((t) => t.k === tab) < TABS.length - 1 ? (
               <button onClick={() => setTab(TABS[TABS.findIndex((t) => t.k === tab) + 1].k)} style={{ flex: 1, background: C.gold, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700 }}>Next · {TABS[TABS.findIndex((t) => t.k === tab) + 1].l} →</button>
             ) : (
-              <button onClick={() => setOpenId(null)} style={{ flex: 1, background: C.brown, color: C.cream, border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700 }}>✓ Done</button>
+              <button
+                onClick={finishPickupSheet}
+                disabled={finishingPickup}
+                style={{ flex: 1, background: finishingPickup ? C.slate : C.brown, color: C.cream, border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700 }}
+              >
+                {finishingPickup ? "Saving…" : tab === "pickup" && !open.collected ? "✓ Picked up & done" : "✓ Done"}
+              </button>
             )}
               </>
             )}

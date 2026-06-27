@@ -5,4 +5,7 @@ dist
 .env.*.local
 .env.local.*
 .vercel
+.env.vercel.tmp
+.env.vercel.dev
 .DS_Store
+local-dev/

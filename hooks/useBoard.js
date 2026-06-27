@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { todayMelbourneDateString } from "../lib/dates";
+import { todayMelbourneDateString, formatVisitDate } from "../lib/dates";
 import { chipsToPresets, patchToDb, rowToBoardDog } from "../lib/boardData";
-import { uploadGroomPhoto, getGroomPhotoSignedUrl, signPhotoPathMap } from "../lib/groomPhotos.js";
+import { uploadGroomPhoto, getGroomPhotoDisplayUrl, signPhotoPathMap } from "../lib/groomPhotos.js";
 import { computeDueToRebook, dueEntryToBoardDog } from "../lib/dueToRebook.js";
 
 const DEFAULT_PRESETS = {
@@ -19,11 +19,15 @@ async function attachPhotoUrls(rows) {
   const map = await signPhotoPathMap(paths);
   return rows.map((row) => ({
     ...row,
-    groomPhotoUrl: row.groomPhotoPath ? map[row.groomPhotoPath] || null : null,
+    groomPhotoUrl: row.groomPhotoPath
+      ? map[row.groomPhotoPath] || row.groomPhotoUrl || null
+      : row.groomPhotoUrl || null,
     lastVisit: row.lastVisit
       ? {
           ...row.lastVisit,
-          photoUrl: row.lastVisit.photoPath ? map[row.lastVisit.photoPath] || null : null,
+          photoUrl: row.lastVisit.photoPath
+            ? map[row.lastVisit.photoPath] || row.lastVisit.photoUrl || null
+            : row.lastVisit.photoUrl || null,
         }
       : null,
   }));
@@ -194,18 +198,75 @@ export function useBoard(session) {
     }
 
     if (patch.collected === true) {
-      const { error } = await supabase.from("visits").insert({
-        dog_id: current.dogId,
-        appointment_id: id,
-        visit_date: todayMelbourneDateString(),
-        groomer: current.groomer || null,
-        service: current.service || null,
-        did: [current.today?.cut, current.today?.svc].filter(Boolean).join(" · ") || null,
-        duration: null,
-        note: current.today?.watch || null,
-        photo_url: current.groomPhotoPath || null,
-      });
-      if (error) throw error;
+      const { data: existingVisit } = await supabase
+        .from("visits")
+        .select("id")
+        .eq("appointment_id", id)
+        .maybeSingle();
+
+      const visitDate = todayMelbourneDateString();
+      const photoPath = current.groomPhotoPath || null;
+
+      if (!existingVisit) {
+        const { error } = await supabase.from("visits").insert({
+          dog_id: current.dogId,
+          appointment_id: id,
+          visit_date: visitDate,
+          groomer: current.groomer || null,
+          service: current.service || null,
+          did: [current.today?.cut, current.today?.svc].filter(Boolean).join(" · ") || null,
+          duration: null,
+          note: current.today?.watch || null,
+          photo_url: photoPath,
+        });
+        if (error) throw error;
+      }
+
+      let photoUrl =
+        current.groomPhotoUrl ||
+        current.groomPhotoPreviewUrl ||
+        current.lastVisit?.photoUrl ||
+        null;
+      if (photoPath && (!photoUrl || !photoUrl.startsWith("http"))) {
+        try {
+          photoUrl = await getGroomPhotoDisplayUrl(photoPath, 7200);
+        } catch {
+          photoUrl = current.groomPhotoUrl || current.groomPhotoPreviewUrl || null;
+        }
+      }
+
+      const lastVisit = {
+        date: formatVisitDate(visitDate),
+        groomer: current.groomer || "",
+        service: current.service || "",
+        did: [current.today?.cut, current.today?.svc].filter(Boolean).join(" · ") || "",
+        took: "",
+        note: current.today?.watch || "",
+        photoPath,
+        photoUrl,
+      };
+
+      setDogs((p) =>
+        p.map((d) => (d.id === id ? { ...d, ...current, collected: true, lastVisit } : d))
+      );
+    }
+  };
+
+  const markCollected = async (id) => {
+    const current = dogs.find((d) => d.id === id);
+    if (!current || current.readOnly) return;
+    if (current.collected) return;
+
+    const merged = { ...current, collected: true };
+    setDogs((p) => p.map((d) => (d.id === id ? merged : d)));
+    setBoardError("");
+    try {
+      await persistPatch(id, { collected: true }, merged);
+      await loadBoard();
+    } catch (e) {
+      setBoardError(e.message || "Could not mark as picked up.");
+      await loadBoard();
+      throw e;
     }
   };
 
@@ -217,7 +278,11 @@ export function useBoard(session) {
     const merged = { ...current, ...patch };
     const setter = boardMode === "due" ? setDueDogs : setDogs;
     setter((p) => p.map((d) => (d.id === id ? merged : d)));
-    persistPatch(id, patch, merged).catch((e) => {
+    persistPatch(id, patch, merged)
+      .then(async () => {
+        if (patch.collected === true) await loadBoard();
+      })
+      .catch((e) => {
       setBoardError(e.message || "Could not save changes. Refresh to retry.");
       if (boardMode === "due") loadDueDogs();
       else loadBoard();
@@ -236,6 +301,14 @@ export function useBoard(session) {
   const uploadPhoto = async (appointmentId, file) => {
     const current = dogs.find((d) => d.id === appointmentId);
     if (!current?.dogId || current.readOnly) return;
+
+    const previewUrl = URL.createObjectURL(file);
+    const withPreview = {
+      ...current,
+      groomPhotoPreviewUrl: previewUrl,
+    };
+    setDogs((p) => p.map((d) => (d.id === appointmentId ? withPreview : d)));
+
     setPhotoUploading(true);
     setBoardError("");
     try {
@@ -244,12 +317,26 @@ export function useBoard(session) {
         appointmentId,
         file,
       });
-      const url = await getGroomPhotoSignedUrl(path, 7200);
-      const patch = { groomPhotoPath: path, groomPhotoUrl: url };
-      const merged = { ...current, ...patch };
+      let url = null;
+      try {
+        url = await getGroomPhotoDisplayUrl(path, 7200);
+      } catch (e) {
+        setBoardError(
+          (e.message || "Photo saved but could not load preview.") +
+            " Check Supabase Storage RLS for groom-photos."
+        );
+      }
+      const patch = {
+        groomPhotoPath: path,
+        groomPhotoUrl: url || previewUrl,
+        groomPhotoPreviewUrl: url ? null : previewUrl,
+      };
+      const merged = { ...withPreview, ...patch };
+      if (url) URL.revokeObjectURL(previewUrl);
       setDogs((p) => p.map((d) => (d.id === appointmentId ? merged : d)));
-      await persistPatch(appointmentId, patch, merged);
+      await persistPatch(appointmentId, { groomPhotoPath: path }, merged);
     } catch (e) {
+      URL.revokeObjectURL(previewUrl);
       setBoardError(e.message || "Could not upload photo.");
       loadBoard();
     } finally {
@@ -364,6 +451,7 @@ export function useBoard(session) {
     uploadPhoto,
     addPreset,
     removePreset,
+    markCollected,
     syncSquare,
   };
 }

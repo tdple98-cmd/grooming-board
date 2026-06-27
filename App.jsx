@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "./contexts/AuthContext.jsx";
 import { useBoard } from "./hooks/useBoard.js";
 import Login from "./components/Login.jsx";
@@ -54,8 +54,8 @@ const thirtyText = (d) =>
   "Hi " + d.owner.split(" ")[0] + " - " + d.dog + " will be ready in about 30 mins. Feel free to come now and collect your pup! - The Poodle Specialist";
 const pickupText = (d) =>
   "Hi " + d.owner.split(" ")[0] + " - " + d.dog + " is all done and ready for pickup. Come collect your pup whenever suits! - The Poodle Specialist";
-const photoText = (d) =>
-  d.dog + " is all done and looking gorgeous! See the photo here: [link] - The Poodle Specialist";
+const photoText = (d, url) =>
+  d.dog + " is all done and looking gorgeous! See the photo here: " + (url || "[link]") + " - The Poodle Specialist";
 
 function elapsed(since) {
   if (!since) return null;
@@ -68,17 +68,23 @@ export default function App() {
   const { session, profile, loading, needsPassword, signOut } = useAuth();
   const {
     dogs,
+    dueDogs,
+    boardMode,
+    setBoardMode,
     presets,
     boardLoading,
     boardError,
     boardNotice,
     syncing,
+    photoUploading,
     update,
     setStatus,
+    uploadPhoto,
     addPreset,
     removePreset,
     syncSquare,
   } = useBoard(session);
+  const photoInputRef = useRef(null);
   const [openId, setOpenId] = useState(null);
   const [filter, setFilter] = useState("all");
   const [showSettings, setShowSettings] = useState(false);
@@ -94,14 +100,22 @@ export default function App() {
     return () => clearInterval(t);
   }, []);
 
-  const open = dogs.find((d) => d.id === openId);
+  const listSource = boardMode === "due" ? dueDogs : dogs;
+  const open = listSource.find((d) => d.id === openId);
+
+  const switchBoardMode = (mode) => {
+    setBoardMode(mode);
+    setFilter("all");
+    setOpenId(null);
+    setMenuId(null);
+  };
 
   useEffect(() => {
     if (open) setPetNameDraft(open.dog || "");
   }, [openId, open?.dog]);
 
   const savePetName = () => {
-    if (!open) return;
+    if (!open || open.readOnly) return;
     const trimmed = petNameDraft.trim();
     if (trimmed && trimmed !== open.dog) {
       update(open.id, { dog: trimmed, nameLocked: true });
@@ -109,9 +123,11 @@ export default function App() {
   };
 
   const done = (d) => d.collected || d.status === "noshow";
-  const visible = (filter === "all" ? dogs : dogs.filter((d) => d.status === filter && !d.collected))
-    .slice()
-    .sort((a, b) => (done(a) === done(b) ? 0 : done(a) ? 1 : -1));
+  const visible = boardMode === "due"
+    ? dueDogs
+    : (filter === "all" ? dogs : dogs.filter((d) => d.status === filter && !d.collected))
+        .slice()
+        .sort((a, b) => (done(a) === done(b) ? 0 : done(a) ? 1 : -1));
   const count = (k) => (k === "all" ? dogs.length : dogs.filter((d) => d.status === k && !d.collected).length);
 
   // Simple glance numbers — all plain counts.
@@ -190,18 +206,35 @@ export default function App() {
           ))}
         </div>
 
-        {/* filters */}
+        {/* board mode + filters */}
         <div style={{ display: "flex", gap: 6, marginTop: 13 }}>
-          {[{ key: "all", label: "All" }, ...STEPS].map((f) => {
-            const active = filter === f.key;
-            return (
-              <button key={f.key} onClick={() => setFilter(f.key)} style={{ flex: 1, background: active ? C.gold : "rgba(244,239,231,0.08)", color: active ? C.brown : "rgba(244,239,231,0.8)", border: "1px solid " + (active ? C.gold : "rgba(244,239,231,0.13)"), borderRadius: 11, padding: "7px 2px", fontSize: 10.5, fontWeight: 600, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-                <span>{f.label}</span>
-                <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "Fraunces, serif" }}>{count(f.key)}</span>
-              </button>
-            );
-          })}
+          <button
+            onClick={() => switchBoardMode("today")}
+            style={{ flex: 1, background: boardMode === "today" ? C.gold : "rgba(244,239,231,0.08)", color: boardMode === "today" ? C.brown : "rgba(244,239,231,0.8)", border: "1px solid " + (boardMode === "today" ? C.gold : "rgba(244,239,231,0.13)"), borderRadius: 11, padding: "7px 2px", fontSize: 10.5, fontWeight: 600 }}
+          >
+            Today
+          </button>
+          <button
+            onClick={() => switchBoardMode("due")}
+            style={{ flex: 1, background: boardMode === "due" ? C.gold : "rgba(244,239,231,0.08)", color: boardMode === "due" ? C.brown : "rgba(244,239,231,0.8)", border: "1px solid " + (boardMode === "due" ? C.gold : "rgba(244,239,231,0.13)"), borderRadius: 11, padding: "7px 2px", fontSize: 10.5, fontWeight: 600, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}
+          >
+            <span>Due to rebook</span>
+            <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "Fraunces, serif" }}>{dueDogs.length}</span>
+          </button>
         </div>
+        {boardMode === "today" && (
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            {[{ key: "all", label: "All" }, ...STEPS].map((f) => {
+              const active = filter === f.key;
+              return (
+                <button key={f.key} onClick={() => setFilter(f.key)} style={{ flex: 1, background: active ? C.gold : "rgba(244,239,231,0.08)", color: active ? C.brown : "rgba(244,239,231,0.8)", border: "1px solid " + (active ? C.gold : "rgba(244,239,231,0.13)"), borderRadius: 11, padding: "7px 2px", fontSize: 10.5, fontWeight: 600, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+                  <span>{f.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "Fraunces, serif" }}>{count(f.key)}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {boardError && (
@@ -220,10 +253,12 @@ export default function App() {
       <div style={{ padding: "16px 14px 40px" }}>
         {visible.length === 0 && (
           <div style={{ textAlign: "center", color: C.slate, padding: "50px 20px", fontFamily: "Fraunces, serif", fontSize: 17 }}>
-            No appointments for today.
-            <div style={{ fontFamily: "Poppins, sans-serif", fontSize: 13, marginTop: 6, lineHeight: 1.45 }}>
-              Settings → Sync from Square to load today&apos;s bookings.
-            </div>
+            {boardMode === "due" ? "No dogs due for rebook." : "No appointments for today."}
+            {boardMode === "today" && (
+              <div style={{ fontFamily: "Poppins, sans-serif", fontSize: 13, marginTop: 6, lineHeight: 1.45 }}>
+                Settings → Sync from Square to load today&apos;s bookings.
+              </div>
+            )}
           </div>
         )}
 
@@ -248,13 +283,21 @@ export default function App() {
                     <div style={{ fontFamily: "Fraunces, serif", fontSize: 20, fontWeight: 600 }}>{d.dog}{d.weight && <span style={{ fontSize: 13, color: C.slate, fontWeight: 400 }}> · {d.weight}</span>}</div>
                     <div style={{ fontSize: 15, color: C.ink, fontWeight: 600, marginTop: 3 }}>{d.owner}</div>
                     {d.litterMates && <div style={{ fontSize: 11, color: C.blue, fontWeight: 600, marginTop: 2, display: "inline-flex", alignItems: "center", gap: 4, background: C.blue + "14", padding: "2px 8px", borderRadius: 999 }}>🔗 With {d.litterMates} (same owner)</div>}
-                    <div style={{ fontSize: 11.5, color: C.slate, marginTop: 3 }}>Drop {d.dropTime} · Pick up {d.pickTime}</div>
+                    {d.dueRebook ? (
+                      <div style={{ fontSize: 11.5, color: C.slate, marginTop: 3 }}>Last groom {d.lastGroomDate} · {d.service}</div>
+                    ) : (
+                      <div style={{ fontSize: 11.5, color: C.slate, marginTop: 3 }}>Drop {d.dropTime} · Pick up {d.pickTime}</div>
+                    )}
                   </div>
 
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
-                    {d.collected
-                      ? <span style={{ background: C.green + "1A", color: C.green, borderRadius: 999, padding: "5px 11px", fontSize: 11.5, fontWeight: 700 }}>✓ Collected</span>
-                      : <span style={{ background: st.dot + "1A", color: st.color, borderRadius: 999, padding: "5px 11px", fontSize: 11.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 6.5, height: 6.5, borderRadius: 999, background: st.dot }} />{st.label}</span>}
+                    {d.dueRebook ? (
+                      <span style={{ background: C.amber + "1A", color: C.amber, borderRadius: 999, padding: "5px 11px", fontSize: 11.5, fontWeight: 700 }}>↻ {d.dueLabel}</span>
+                    ) : d.collected ? (
+                      <span style={{ background: C.green + "1A", color: C.green, borderRadius: 999, padding: "5px 11px", fontSize: 11.5, fontWeight: 700 }}>✓ Collected</span>
+                    ) : (
+                      <span style={{ background: st.dot + "1A", color: st.color, borderRadius: 999, padding: "5px 11px", fontSize: 11.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 6.5, height: 6.5, borderRadius: 999, background: st.dot }} />{st.label}</span>
+                    )}
                     {here && !d.collected && <span style={{ fontSize: 10.5, color: longWait ? C.rose : C.slate, fontWeight: longWait ? 700 : 500 }}>{longWait ? "⏱ " : ""}here {here}</span>}
                   </div>
                 </div>
@@ -302,7 +345,9 @@ export default function App() {
 
               {/* ONE big clear action per dog, based on where it is */}
               <div style={{ borderTop: "1px solid " + C.line, padding: 11, display: "flex", gap: 9, alignItems: "center" }}>
-                {d.collected ? (
+                {d.dueRebook ? (
+                  <span style={{ flex: 1, textAlign: "center", color: C.amber, fontSize: 13, fontWeight: 600 }}>Due for rebook — view only</span>
+                ) : d.collected ? (
                   <span style={{ flex: 1, textAlign: "center", color: C.slate, fontSize: 13, fontWeight: 600 }}>All done — picked up 🐾</span>
                 ) : d.status === "noshow" ? (
                   <>
@@ -402,22 +447,33 @@ export default function App() {
           </div>
 
           {/* where is this dog — tap to change */}
-          <SectionLabel>Where is {open.dog}?</SectionLabel>
-          <div style={{ display: "flex", gap: 5, background: C.paper, padding: 4, borderRadius: 13, border: "1px solid " + C.line, marginBottom: 8 }}>
-            {STEPS.filter((s) => s.key !== "noshow").map((s) => {
-              const active = open.status === s.key;
-              return <button key={s.key} onClick={() => setStatus(open.id, s.key)} style={{ flex: 1, background: active ? s.color : "transparent", color: active ? "#fff" : C.slate, border: "none", borderRadius: 9, padding: "10px 2px", fontSize: 11, fontWeight: 700 }}>{s.label}</button>;
-            })}
-          </div>
-          <button onClick={() => setStatus(open.id, open.status === "noshow" ? "booked" : "noshow")} style={{ width: "100%", background: open.status === "noshow" ? C.rose : "transparent", color: open.status === "noshow" ? "#fff" : C.slate, border: "1px solid " + (open.status === "noshow" ? C.rose : C.line), borderRadius: 11, padding: "9px", fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{open.status === "noshow" ? "✓ Marked no-show — tap to undo" : "Mark as no-show"}</button>
+          {!open.readOnly && (
+            <>
+              <SectionLabel>Where is {open.dog}?</SectionLabel>
+              <div style={{ display: "flex", gap: 5, background: C.paper, padding: 4, borderRadius: 13, border: "1px solid " + C.line, marginBottom: 8 }}>
+                {STEPS.filter((s) => s.key !== "noshow").map((s) => {
+                  const active = open.status === s.key;
+                  return <button key={s.key} onClick={() => setStatus(open.id, s.key)} style={{ flex: 1, background: active ? s.color : "transparent", color: active ? "#fff" : C.slate, border: "none", borderRadius: 9, padding: "10px 2px", fontSize: 11, fontWeight: 700 }}>{s.label}</button>;
+                })}
+              </div>
+              <button onClick={() => setStatus(open.id, open.status === "noshow" ? "booked" : "noshow")} style={{ width: "100%", background: open.status === "noshow" ? C.rose : "transparent", color: open.status === "noshow" ? "#fff" : C.slate, border: "1px solid " + (open.status === "noshow" ? C.rose : C.line), borderRadius: 11, padding: "9px", fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{open.status === "noshow" ? "✓ Marked no-show — tap to undo" : "Mark as no-show"}</button>
+            </>
+          )}
+          {open.readOnly && (
+            <div style={{ background: C.amber + "14", border: "1px solid " + C.amber + "44", borderRadius: 12, padding: "12px 14px", marginBottom: 12, fontSize: 13, color: C.amber, lineHeight: 1.45 }}>
+              Due for rebook — read only. Last groom {open.lastGroomDate}. Book in Square; this list updates after sync.
+            </div>
+          )}
 
           {/* tabs */}
-          <div style={{ display: "flex", gap: 4, marginTop: 14, borderBottom: "1px solid " + C.line }}>
-            {TABS.map((t) => {
-              const active = tab === t.k;
-              return <button key={t.k} onClick={() => setTab(t.k)} style={{ flex: 1, background: "none", border: "none", borderBottom: "3px solid " + (active ? C.gold : "transparent"), color: active ? C.brown : C.slate, padding: "9px 0 11px", fontSize: 13, fontWeight: active ? 700 : 500 }}>{t.l}</button>;
-            })}
-          </div>
+          {!open.readOnly && (
+            <div style={{ display: "flex", gap: 4, marginTop: 14, borderBottom: "1px solid " + C.line }}>
+              {TABS.map((t) => {
+                const active = tab === t.k;
+                return <button key={t.k} onClick={() => setTab(t.k)} style={{ flex: 1, background: "none", border: "none", borderBottom: "3px solid " + (active ? C.gold : "transparent"), color: active ? C.brown : C.slate, padding: "9px 0 11px", fontSize: 13, fontWeight: active ? 700 : 500 }}>{t.l}</button>;
+              })}
+            </div>
+          )}
 
           <div style={{ paddingTop: 16 }}>
             {tab === "today" && (
@@ -426,7 +482,7 @@ export default function App() {
                 {TAGS.map((t) => <Field key={t.key} label={t.label} accent={t.color} placeholder={t.hint} value={open.today[t.key]} onChange={(v) => update(open.id, { today: { ...open.today, [t.key]: v } })} presets={presets.today[t.key]} />)}
               </>
             )}
-            {tab === "specs" && (
+            {(tab === "specs" || open.readOnly) && (
               <>
                 {/* Last visit history */}
                 {open.lastVisit ? (
@@ -436,9 +492,9 @@ export default function App() {
                       <span style={{ fontSize: 12, color: C.slate }}>{open.lastVisit.date}</span>
                     </div>
                     <div style={{ display: "flex", gap: 12 }}>
-                      {open.lastVisit.photo && (
-                        <div style={{ width: 76, height: 76, borderRadius: 12, flexShrink: 0, background: open.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36, border: "1px solid " + C.line }}>{open.avatar}</div>
-                      )}
+                      {(open.lastVisit.photoUrl || open.lastVisit.photoPath) ? (
+                        <img src={open.lastVisit.photoUrl || undefined} alt="" style={{ width: 76, height: 76, borderRadius: 12, flexShrink: 0, objectFit: "cover", border: "1px solid " + C.line, background: open.bg }} />
+                      ) : null}
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 14, color: C.ink, lineHeight: 1.45, fontWeight: 600 }}>{open.lastVisit.did}</div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 9 }}>
@@ -448,7 +504,7 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                    {open.lastVisit.photo && <div style={{ fontSize: 10.5, color: C.slate, fontStyle: "italic", marginTop: 7 }}>Photo from last visit.</div>}
+                    {(open.lastVisit.photoUrl || open.lastVisit.photoPath) && <div style={{ fontSize: 10.5, color: C.slate, fontStyle: "italic", marginTop: 7 }}>Photo from last visit.</div>}
                     {open.lastVisit.note && <div style={{ fontSize: 13, color: C.slate, fontStyle: "italic", marginTop: 9, lineHeight: 1.4 }}>“{open.lastVisit.note}”</div>}
                   </div>
                 ) : (
@@ -457,11 +513,17 @@ export default function App() {
                     <div style={{ fontSize: 13, color: C.slate, fontStyle: "italic" }}>First visit — no history yet. After this groom, it’ll show here next time.</div>
                   </div>
                 )}
-                <Hint>Fill once and it’s saved for next time.</Hint>
-                {SPECS.map((s) => <Field key={s.key} label={s.label} placeholder={"Tap a chip or type…"} value={open.specs[s.key]} onChange={(v) => update(open.id, { specs: { ...open.specs, [s.key]: v } })} presets={presets.specs[s.key]} />)}
+                {!open.readOnly && <Hint>Fill once and it’s saved for next time.</Hint>}
+                {!open.readOnly && SPECS.map((s) => <Field key={s.key} label={s.label} placeholder={"Tap a chip or type…"} value={open.specs[s.key]} onChange={(v) => update(open.id, { specs: { ...open.specs, [s.key]: v } })} presets={presets.specs[s.key]} />)}
+                {open.readOnly && SPECS.filter((s) => open.specs[s.key]).map((s) => (
+                  <div key={s.key} style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 700, color: C.goldDeep, marginBottom: 4 }}>{s.label}</div>
+                    <div style={{ fontSize: 14, color: C.ink }}>{open.specs[s.key]}</div>
+                  </div>
+                ))}
               </>
             )}
-            {tab === "checkin" && (
+            {tab === "checkin" && !open.readOnly && (
               <>
                 <SectionLabel>Arrived?</SectionLabel>
                 {open.checkedInAt ? <Hint>Checked in · here {elapsed(open.checkedInAt)}.</Hint> : (
@@ -478,7 +540,7 @@ export default function App() {
                 <button onClick={() => update(open.id, { late: !open.late })} style={{ width: "100%", background: open.late ? C.rose : C.paper, color: open.late ? "#fff" : C.ink, border: "1px solid " + (open.late ? C.rose : C.line), borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 700 }}>{open.late ? "! Flagged late — tap to clear" : "Flag as running late"}</button>
               </>
             )}
-            {tab === "pickup" && (
+            {tab === "pickup" && !open.readOnly && (
               <>
                 <SectionLabel>Tell the owner it’s ready</SectionLabel>
                 <Quote>{thirtyText(open)}</Quote>
@@ -490,13 +552,32 @@ export default function App() {
                 <div style={{ height: 1, background: C.line, margin: "20px 0" }} />
                 <SectionLabel>Finished photo</SectionLabel>
                 <Hint>Saved to {open.dog}’s record, then texted to {open.owner.split(" ")[0]} as a link.</Hint>
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) uploadPhoto(open.id, file);
+                    e.target.value = "";
+                  }}
+                />
                 <div style={{ display: "flex", gap: 12 }}>
-                  <div onClick={() => update(open.id, { groomPhoto: !open.groomPhoto })} style={{ width: 92, height: 92, borderRadius: 15, flexShrink: 0, background: open.groomPhoto ? open.bg : C.paper, border: "1.5px " + (open.groomPhoto ? "solid " + C.gold : "dashed " + C.line), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: open.groomPhoto ? 42 : 22, color: C.slate, cursor: "pointer" }}>
-                    {open.groomPhoto ? open.avatar : <><span style={{ fontSize: 24 }}>📷</span><span style={{ fontSize: 10, marginTop: 3, fontWeight: 600 }}>Add</span></>}
+                  <div
+                    onClick={() => !photoUploading && photoInputRef.current?.click()}
+                    style={{ width: 92, height: 92, borderRadius: 15, flexShrink: 0, background: open.groomPhotoUrl ? "transparent" : C.paper, border: "1.5px " + (open.groomPhotoPath ? "solid " + C.gold : "dashed " + C.line), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: 22, color: C.slate, cursor: photoUploading ? "wait" : "pointer", overflow: "hidden" }}
+                  >
+                    {open.groomPhotoUrl ? (
+                      <img src={open.groomPhotoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <><span style={{ fontSize: 24 }}>📷</span><span style={{ fontSize: 10, marginTop: 3, fontWeight: 600 }}>{photoUploading ? "…" : "Add"}</span></>
+                    )}
                   </div>
                   <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 8 }}>
-                    {open.groomPhoto
-                      ? <a href={smsHref(open.phone, photoText(open))} style={{ ...bigBtn(C.green), textDecoration: "none", textAlign: "center", padding: "12px" }}>✉ Send photo link</a>
+                    {open.groomPhotoUrl
+                      ? <a href={smsHref(open.phone, photoText(open, open.groomPhotoUrl))} style={{ ...bigBtn(C.green), textDecoration: "none", textAlign: "center", padding: "12px" }}>✉ Send photo link</a>
                       : <span style={{ fontSize: 12.5, color: C.slate, fontStyle: "italic" }}>Tap the box to add a photo.</span>}
                   </div>
                 </div>
@@ -505,6 +586,10 @@ export default function App() {
           </div>
 
           <div style={{ position: "sticky", bottom: 0, margin:" 16px -20px 0", padding: "12px 20px calc(12px + env(safe-area-inset-bottom))", background: "rgba(244,239,231,0.92)", backdropFilter: "blur(8px)", borderTop: "1px solid " + C.line, display: "flex", gap: 10, zIndex: 5 }}>
+            {open.readOnly ? (
+              <button onClick={() => setOpenId(null)} style={{ flex: 1, background: C.brown, color: C.cream, border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700 }}>✓ Done</button>
+            ) : (
+              <>
             {TABS.findIndex((t) => t.k === tab) > 0 && (
               <button onClick={() => setTab(TABS[TABS.findIndex((t) => t.k === tab) - 1].k)} style={{ flexShrink: 0, background: C.paper, color: C.brown, border: "1.5px solid " + C.line, borderRadius: 14, padding: "15px 18px", fontSize: 14.5, fontWeight: 700 }}>← Back</button>
             )}
@@ -512,6 +597,8 @@ export default function App() {
               <button onClick={() => setTab(TABS[TABS.findIndex((t) => t.k === tab) + 1].k)} style={{ flex: 1, background: C.gold, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700 }}>Next · {TABS[TABS.findIndex((t) => t.k === tab) + 1].l} →</button>
             ) : (
               <button onClick={() => setOpenId(null)} style={{ flex: 1, background: C.brown, color: C.cream, border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700 }}>✓ Done</button>
+            )}
+              </>
             )}
           </div>
         </Sheet>

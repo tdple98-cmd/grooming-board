@@ -28,6 +28,17 @@ export function getDefaultSyncWindow() {
   return { startDate, days, windowEnd, today, back, forward };
 }
 
+/** History backfill: past N days through upcoming week (for due-to-rebook data). */
+export function getHistorySyncWindow() {
+  const forward = Math.max(0, parseInt(process.env.SQUARE_SYNC_DAYS_FORWARD || "6", 10));
+  const back = Math.max(1, parseInt(process.env.SQUARE_SYNC_DAYS_BACK || "90", 10));
+  const today = todayMelbourneDateString();
+  const startDate = shiftMelbourneDateString(today, -back);
+  const days = back + forward + 1;
+  const windowEnd = shiftMelbourneDateString(startDate, days - 1);
+  return { startDate, days, windowEnd, today, back, forward, mode: "history" };
+}
+
 export function melbourneRangeBounds(startDateStr, dayCount) {
   const first = melbourneDayBounds(startDateStr);
   const lastDay = shiftMelbourneDateString(startDateStr, Math.max(0, dayCount - 1));
@@ -300,6 +311,7 @@ export async function syncSquareToSupabase({
   days,
   locationId,
   purge = true,
+  syncMode,
 }) {
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const window =
@@ -308,7 +320,9 @@ export async function syncSquareToSupabase({
           startDate: startDate || todayMelbourneDateString(),
           days: days ?? 1,
         }
-      : getDefaultSyncWindow();
+      : syncMode === "history"
+        ? getHistorySyncWindow()
+        : getDefaultSyncWindow();
   const date = window.startDate;
   const dayCount = window.days;
   const syncDates = dateRangeFromStart(date, dayCount);

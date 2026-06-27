@@ -58,6 +58,17 @@ function parseBody(req) {
   return typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
 }
 
+function resolveSyncMode(req, body) {
+  if (body.mode === "history") return "history";
+  try {
+    const url = new URL(req.url || "", "http://localhost");
+    if (url.searchParams.get("mode") === "history") return "history";
+  } catch {
+    /* ignore */
+  }
+  return "forward";
+}
+
 export default async function handler(req, res) {
   loadEnvFiles();
 
@@ -76,13 +87,15 @@ export default async function handler(req, res) {
     }
 
     const body = parseBody(req);
+    const syncMode = resolveSyncMode(req, body);
     const syncOpts = {
       accessToken: config.accessToken,
       environment: config.environment,
       supabaseUrl: config.supabaseUrl,
       serviceRoleKey: config.serviceRoleKey,
       locationId: body.location_id,
-      purge: body.purge !== false,
+      purge: syncMode === "history" ? false : body.purge !== false,
+      syncMode,
     };
 
     if (body.date != null || body.days != null) {

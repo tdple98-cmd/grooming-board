@@ -2,19 +2,43 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { todayMelbourneDateString } from "../lib/dates";
 import { chipsToPresets, patchToDb, rowToBoardDog } from "../lib/boardData";
+import { uploadGroomPhoto, getGroomPhotoSignedUrl, signPhotoPathMap } from "../lib/groomPhotos.js";
+import { computeDueToRebook, dueEntryToBoardDog } from "../lib/dueToRebook.js";
 
 const DEFAULT_PRESETS = {
   today: { cut: [], watch: [], svc: [] },
   specs: { coat: [], temperament: [] },
 };
 
+async function attachPhotoUrls(rows) {
+  const paths = [];
+  for (const row of rows) {
+    if (row.groomPhotoPath) paths.push(row.groomPhotoPath);
+    if (row.lastVisit?.photoPath) paths.push(row.lastVisit.photoPath);
+  }
+  const map = await signPhotoPathMap(paths);
+  return rows.map((row) => ({
+    ...row,
+    groomPhotoUrl: row.groomPhotoPath ? map[row.groomPhotoPath] || null : null,
+    lastVisit: row.lastVisit
+      ? {
+          ...row.lastVisit,
+          photoUrl: row.lastVisit.photoPath ? map[row.lastVisit.photoPath] || null : null,
+        }
+      : null,
+  }));
+}
+
 export function useBoard(session) {
   const [dogs, setDogs] = useState([]);
+  const [dueDogs, setDueDogs] = useState([]);
+  const [boardMode, setBoardMode] = useState("today");
   const [presets, setPresets] = useState(DEFAULT_PRESETS);
   const [boardLoading, setBoardLoading] = useState(true);
   const [boardError, setBoardError] = useState("");
   const [boardNotice, setBoardNotice] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [photoUploading, setPhotoUploading] = useState(false);
 
   const loadBoard = useCallback(async () => {
     if (!session) return;
@@ -55,13 +79,47 @@ export function useBoard(session) {
 
     if (chipErr) throw chipErr;
 
-    setDogs(todayRows.map((a) => rowToBoardDog(a, visitByDog[a.dog_id])));
+    const mapped = todayRows.map((a) => rowToBoardDog(a, visitByDog[a.dog_id]));
+    setDogs(await attachPhotoUrls(mapped));
     setPresets(chipsToPresets(chipRows));
+  }, [session]);
+
+  const loadDueDogs = useCallback(async () => {
+    if (!session) return;
+    setBoardError("");
+    const today = todayMelbourneDateString();
+
+    const { data: appointments, error: apptErr } = await supabase
+      .from("appointments")
+      .select("appointment_date, service, dog_id, dogs(*)");
+
+    if (apptErr) throw apptErr;
+
+    const dueEntries = computeDueToRebook(appointments, today);
+    const dogIds = dueEntries.map((e) => e.dogId);
+    let visitByDog = {};
+
+    if (dogIds.length) {
+      const { data: visits, error: visitErr } = await supabase
+        .from("visits")
+        .select("*")
+        .in("dog_id", dogIds)
+        .order("visit_date", { ascending: false });
+
+      if (visitErr) throw visitErr;
+      for (const v of visits || []) {
+        if (!visitByDog[v.dog_id]) visitByDog[v.dog_id] = v;
+      }
+    }
+
+    const mapped = dueEntries.map((e) => dueEntryToBoardDog(e, visitByDog[e.dogId]));
+    setDueDogs(await attachPhotoUrls(mapped));
   }, [session]);
 
   useEffect(() => {
     if (!session) {
       setDogs([]);
+      setDueDogs([]);
       setBoardLoading(false);
       return;
     }
@@ -69,7 +127,9 @@ export function useBoard(session) {
     let mounted = true;
     setBoardLoading(true);
 
-    loadBoard()
+    const load = boardMode === "due" ? loadDueDogs() : loadBoard();
+
+    load
       .catch((e) => {
         if (mounted) setBoardError(e.message || "Could not load board data.");
       })
@@ -79,9 +139,18 @@ export function useBoard(session) {
 
     const channel = supabase
       .channel("board-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointments" }, () => loadBoard())
-      .on("postgres_changes", { event: "*", schema: "public", table: "dogs" }, () => loadBoard())
-      .on("postgres_changes", { event: "*", schema: "public", table: "visits" }, () => loadBoard())
+      .on("postgres_changes", { event: "*", schema: "public", table: "appointments" }, () => {
+        if (boardMode === "due") loadDueDogs();
+        else loadBoard();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "dogs" }, () => {
+        if (boardMode === "due") loadDueDogs();
+        else loadBoard();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "visits" }, () => {
+        if (boardMode === "due") loadDueDogs();
+        else loadBoard();
+      })
       .on("postgres_changes", { event: "*", schema: "public", table: "preset_chips" }, () => loadBoard())
       .subscribe();
 
@@ -89,9 +158,11 @@ export function useBoard(session) {
       mounted = false;
       supabase.removeChannel(channel);
     };
-  }, [session, loadBoard]);
+  }, [session, boardMode, loadBoard, loadDueDogs]);
 
   const persistPatch = async (id, patch, current) => {
+    if (current.readOnly) return;
+
     const { appt, dog } = patchToDb(patch, current);
 
     if (Object.keys(appt).length) {
@@ -132,30 +203,58 @@ export function useBoard(session) {
         did: [current.today?.cut, current.today?.svc].filter(Boolean).join(" · ") || null,
         duration: null,
         note: current.today?.watch || null,
-        photo_url: current.groomPhoto ? "pending" : null,
+        photo_url: current.groomPhotoPath || null,
       });
       if (error) throw error;
     }
   };
 
   const update = (id, patch) => {
-    const current = dogs.find((d) => d.id === id);
-    if (!current) return;
+    const list = boardMode === "due" ? dueDogs : dogs;
+    const current = list.find((d) => d.id === id);
+    if (!current || current.readOnly) return;
 
     const merged = { ...current, ...patch };
-    setDogs((p) => p.map((d) => (d.id === id ? merged : d)));
+    const setter = boardMode === "due" ? setDueDogs : setDogs;
+    setter((p) => p.map((d) => (d.id === id ? merged : d)));
     persistPatch(id, patch, merged).catch((e) => {
       setBoardError(e.message || "Could not save changes. Refresh to retry.");
-      loadBoard();
+      if (boardMode === "due") loadDueDogs();
+      else loadBoard();
     });
   };
 
   const setStatus = (id, v) => {
-    const current = dogs.find((d) => d.id === id);
-    if (!current) return;
+    const list = boardMode === "due" ? dueDogs : dogs;
+    const current = list.find((d) => d.id === id);
+    if (!current || current.readOnly) return;
     const patch = { status: v };
     if (v === "checkedin" && !current.checkedInAt) patch.checkedInAt = Date.now();
     update(id, patch);
+  };
+
+  const uploadPhoto = async (appointmentId, file) => {
+    const current = dogs.find((d) => d.id === appointmentId);
+    if (!current?.dogId || current.readOnly) return;
+    setPhotoUploading(true);
+    setBoardError("");
+    try {
+      const path = await uploadGroomPhoto({
+        dogId: current.dogId,
+        appointmentId,
+        file,
+      });
+      const url = await getGroomPhotoSignedUrl(path, 7200);
+      const patch = { groomPhotoPath: path, groomPhotoUrl: url };
+      const merged = { ...current, ...patch };
+      setDogs((p) => p.map((d) => (d.id === appointmentId ? merged : d)));
+      await persistPatch(appointmentId, patch, merged);
+    } catch (e) {
+      setBoardError(e.message || "Could not upload photo.");
+      loadBoard();
+    } finally {
+      setPhotoUploading(false);
+    }
   };
 
   const addPreset = async (group, key, chip) => {
@@ -239,7 +338,8 @@ export function useBoard(session) {
         setBoardNotice(`Synced ${json.upserted} appointment(s) from ${json.bookingsFound} booking(s).`);
       }
 
-      await loadBoard();
+      if (boardMode === "due") await loadDueDogs();
+      else await loadBoard();
     } catch (e) {
       setBoardNotice("");
       setBoardError(e.message || "Square sync failed");
@@ -250,13 +350,18 @@ export function useBoard(session) {
 
   return {
     dogs,
+    dueDogs,
+    boardMode,
+    setBoardMode,
     presets,
     boardLoading,
     boardError,
     boardNotice,
     syncing,
+    photoUploading,
     update,
     setStatus,
+    uploadPhoto,
     addPreset,
     removePreset,
     syncSquare,

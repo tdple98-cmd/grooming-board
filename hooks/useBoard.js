@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { todayMelbourneDateString, formatVisitDate, historySyncChunks } from "../lib/dates";
+import { todayMelbourneDateString, formatVisitDate, historySyncChunks, resumeSyncChunks } from "../lib/dates";
 import { chipsToPresets, patchToDb, rowToBoardDog } from "../lib/boardData";
 import { uploadGroomPhoto, getGroomPhotoDisplayUrl, signPhotoPathMap } from "../lib/groomPhotos.js";
 import { computeDueToRebook, dueEntryToBoardDog } from "../lib/dueToRebook.js";
@@ -436,6 +436,109 @@ export function useBoard(session) {
     }
   };
 
+  const runHistorySyncChunks = async ({ chunks, authHeaders, onProgress }) => {
+    let bookingsFound = 0;
+    let upserted = 0;
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      onProgress?.(i + 1, chunks.length, chunk.date);
+
+      const syncRes = await fetch("/api/square/sync", {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({
+          mode: "history",
+          date: chunk.date,
+          days: chunk.days,
+          purge: false,
+        }),
+      });
+      const syncJson = await syncRes.json().catch(() => ({}));
+      if (!syncRes.ok || !syncJson?.ok) {
+        throw new Error(
+          syncJson?.hint ||
+            syncJson?.error ||
+            `Square sync failed on chunk ${i + 1}/${chunks.length} (${chunk.date}).`
+        );
+      }
+      bookingsFound += syncJson.bookingsFound ?? 0;
+      upserted += syncJson.upserted ?? 0;
+    }
+
+    return { bookingsFound, upserted };
+  };
+
+  /** Continue backfill from last stored date — keeps all earlier appointments. */
+  const resumeSquareSync = async () => {
+    setSyncing(true);
+    setBoardError("");
+    setBoardNotice("");
+    try {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      const authHeaders = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${s?.access_token || ""}`,
+      };
+
+      const { data: latest, error: latestErr } = await supabase
+        .from("appointments")
+        .select("appointment_date")
+        .order("appointment_date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestErr) throw latestErr;
+
+      const lastDate = latest?.appointment_date
+        ? String(latest.appointment_date).slice(0, 10)
+        : null;
+
+      const plan = resumeSyncChunks({ lastDate });
+
+      if (plan.upToDate) {
+        setBoardNotice(`Already synced through ${plan.windowEnd}.`);
+        return;
+      }
+
+      if (plan.clearedDate) {
+        setBoardNotice(`Refreshing ${plan.clearedDate}, then loading through ${plan.windowEnd}…`);
+        const clearRes = await fetch("/api/square/clear-day", {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({ date: plan.clearedDate }),
+        });
+        const clearJson = await clearRes.json().catch(() => ({}));
+        if (!clearRes.ok || !clearJson?.ok) {
+          throw new Error(clearJson?.error || "Could not refresh last synced day");
+        }
+      } else {
+        setBoardNotice(`Loading history from ${plan.syncFrom} through ${plan.windowEnd}…`);
+      }
+
+      const totals = await runHistorySyncChunks({
+        chunks: plan.chunks,
+        authHeaders,
+        onProgress: (n, total, date) => {
+          setBoardNotice(`Syncing from Square (${n}/${total}): ${date}…`);
+        },
+      });
+
+      setBoardNotice(
+        plan.isFullBackfill
+          ? `Backfill complete. Synced ${totals.upserted} appointments from ${totals.bookingsFound} Square bookings (${plan.syncFrom} → ${plan.windowEnd}).`
+          : `Resume complete. Synced ${totals.upserted} appointments from ${totals.bookingsFound} Square bookings (${plan.syncFrom} → ${plan.windowEnd}). Earlier data was kept.`
+      );
+
+      if (boardMode === "due") await loadDueDogs();
+      else await loadBoard();
+    } catch (e) {
+      setBoardError(e.message || "Square resume sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const resetBoardData = async (dryRun = false) => {
     setResetting(true);
     setBoardError("");
@@ -476,34 +579,13 @@ export function useBoard(session) {
       }
 
       const { startDate, windowEnd, chunks } = historySyncChunks({ back: 90, forward: 7, chunkDays: 30 });
-      let bookingsFound = 0;
-      let upserted = 0;
-
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-        setBoardNotice(`Syncing from Square (${i + 1}/${chunks.length}): ${chunk.date}…`);
-
-        const syncRes = await fetch("/api/square/sync", {
-          method: "POST",
-          headers: authHeaders,
-          body: JSON.stringify({
-            mode: "history",
-            date: chunk.date,
-            days: chunk.days,
-            purge: false,
-          }),
-        });
-        const syncJson = await syncRes.json().catch(() => ({}));
-        if (!syncRes.ok || !syncJson?.ok) {
-          throw new Error(
-            syncJson?.hint ||
-              syncJson?.error ||
-              `Square sync failed on chunk ${i + 1}/${chunks.length} (${chunk.date}).`
-          );
-        }
-        bookingsFound += syncJson.bookingsFound ?? 0;
-        upserted += syncJson.upserted ?? 0;
-      }
+      const totals = await runHistorySyncChunks({
+        chunks,
+        authHeaders,
+        onProgress: (n, total, date) => {
+          setBoardNotice(`Syncing from Square (${n}/${total}): ${date}…`);
+        },
+      });
 
       setBoardNotice(
         `Reset complete. Synced ${upserted} appointments from ${bookingsFound} Square bookings (${startDate} → ${windowEnd}).`
@@ -535,6 +617,7 @@ export function useBoard(session) {
     removePreset,
     markCollected,
     syncSquare,
+    resumeSquareSync,
     resetBoardData,
     resetting,
   };

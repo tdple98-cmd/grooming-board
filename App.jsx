@@ -92,6 +92,7 @@ export default function App() {
     addPreset,
     removePreset,
     syncSquare,
+    resumeSquareSync,
     resetBoardData,
     resetting,
   } = useBoard(session);
@@ -678,10 +679,20 @@ export default function App() {
           <button
             onClick={syncSquare}
             disabled={syncing || resetting}
-            style={{ width: "100%", background: syncing ? C.slate : C.gold, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 12, marginBottom: 16 }}
+            style={{ width: "100%", background: syncing ? C.slate : C.gold, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 12, marginBottom: 8 }}
           >
-            {syncing ? "Syncing from Square…" : "Sync from Square"}
+            {syncing ? "Syncing from Square…" : "Sync today from Square"}
           </button>
+          <button
+            onClick={resumeSquareSync}
+            disabled={syncing || resetting}
+            style={{ width: "100%", background: syncing ? C.slate : C.paper, color: C.brown, border: "1.5px solid " + C.line, borderRadius: 14, padding: "13px", fontSize: 14, fontWeight: 700, marginBottom: 16 }}
+          >
+            Resume history backfill
+          </button>
+          <Hint style={{ marginTop: -8, marginBottom: 16 }}>
+            <strong>Sync today</strong> loads this week only. <strong>Resume backfill</strong> keeps existing data, refreshes the last stored day, then loads everything after it through the next 7 days — use this after a partial import.
+          </Hint>
           <div style={{ background: C.rose + "10", border: "1px solid " + C.rose + "44", borderRadius: 14, padding: 14, marginBottom: 16 }}>
             <SectionLabel style={{ color: C.rose, marginBottom: 6 }}>Delivery cleanup (temporary)</SectionLabel>
             <Hint>Wipes Supabase dogs, appointments, visits, and photos. Keeps staff login and preset chips. Then reloads 90 days from Square in several steps — keep this page open until finished. Square is not modified.</Hint>

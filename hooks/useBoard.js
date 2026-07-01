@@ -3,7 +3,6 @@ import { supabase } from "../lib/supabase";
 import { todayMelbourneDateString, formatVisitDate } from "../lib/dates";
 import { chipsToPresets, patchToDb, rowToBoardDog } from "../lib/boardData";
 import { defaultPresetsFromDefinitions, mergePresetsWithDefaults } from "../lib/presetChipDefaults.js";
-import { ensurePresetChips } from "../lib/seedPresetChips.js";
 import { uploadGroomPhoto, getGroomPhotoDisplayUrl, signPhotoPathMap } from "../lib/groomPhotos.js";
 import { computeDueToRebook, dueEntryToBoardDog } from "../lib/dueToRebook.js";
 
@@ -43,7 +42,6 @@ export function useBoard(session) {
   const [syncing, setSyncing] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
   const boardModeRef = useRef(boardMode);
-  const presetChipsSeededRef = useRef(false);
   const loadedForUserRef = useRef(null);
 
   boardModeRef.current = boardMode;
@@ -79,15 +77,6 @@ export function useBoard(session) {
       if (visitErr) throw visitErr;
       for (const v of visits || []) {
         if (!visitByDog[v.dog_id]) visitByDog[v.dog_id] = v;
-      }
-    }
-
-    if (!presetChipsSeededRef.current) {
-      try {
-        await ensurePresetChips(supabase);
-        presetChipsSeededRef.current = true;
-      } catch (e) {
-        console.warn("Could not seed preset chips:", e.message);
       }
     }
 
@@ -148,7 +137,6 @@ export function useBoard(session) {
       setDueDogs([]);
       setBoardLoading(false);
       loadedForUserRef.current = null;
-      presetChipsSeededRef.current = false;
       return;
     }
 

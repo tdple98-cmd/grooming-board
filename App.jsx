@@ -39,6 +39,8 @@ const SPECS = [
   { key: "health", label: "Health / allergy" },
 ];
 
+const FLAG_FIELD = { key: "flag", label: "Flag for next time", hint: "Tap chips or type — saved for next visit", color: C.amber };
+
 function toggleChip(current, chip) {
   const parts = (current || "").split(",").map((s) => s.trim()).filter(Boolean);
   const i = parts.findIndex((p) => p.toLowerCase() === chip.toLowerCase());
@@ -52,6 +54,64 @@ function groomPhotoSrc(d) {
   return d?.groomPhotoUrl || d?.groomPhotoPreviewUrl || null;
 }
 
+function isPlaceholderDogName(name, owner) {
+  if (!name?.trim()) return true;
+  const lower = name.toLowerCase().trim();
+  if (["pet", "pets", "dog", "dogs", "puppy", "puppies", "animal", "animals"].includes(lower)) return true;
+  if (/'s pet$/i.test(name) || /'s dog$/i.test(name)) return true;
+  if (/^\d+\s*dogs?$/i.test(name)) return true;
+  const given = (owner || "").trim().split(/\s+/)[0]?.toLowerCase();
+  if (given && (lower === `${given}'s dog` || lower === `${given}'s dogs` || lower === `${given} dogs`)) return true;
+  return false;
+}
+
+function ownerFirstName(owner) {
+  return (owner || "").trim().split(/\s+/)[0] || "there";
+}
+
+function smsDogName(d) {
+  return isPlaceholderDogName(d.dog, d.owner) ? "your Pups" : d.dog;
+}
+
+function DogPhotoTile({ d, size, onTap, uploading }) {
+  const src = groomPhotoSrc(d);
+  const canTap = onTap && !d.readOnly && !d.dueRebook;
+  return (
+    <div
+      onClick={canTap ? (e) => { e.stopPropagation(); onTap(d.id); } : undefined}
+      title={canTap ? (src ? "Tap to change photo" : "Tap to add photo") : undefined}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 16,
+        background: src ? "#1a1612" : d.bg,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: Math.round(size * 0.54),
+        overflow: "hidden",
+        cursor: canTap ? (uploading ? "wait" : "pointer") : "default",
+        border: src ? "2px solid " + C.gold : canTap ? "1.5px dashed " + C.line : "none",
+        position: "relative",
+        flexShrink: 0,
+      }}
+    >
+      {src ? (
+        <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      ) : uploading ? (
+        <span style={{ fontSize: 11, color: C.slate, fontWeight: 600 }}>…</span>
+      ) : (
+        <>
+          {d.avatar}
+          {canTap && (
+            <span style={{ position: "absolute", top: 3, left: 3, fontSize: 11, lineHeight: 1, background: "rgba(255,255,255,0.92)", borderRadius: 999, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 4px rgba(42,36,32,0.15)" }}>📷</span>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function lastVisitPhotoSrc(v, d) {
   return v?.photoUrl || (d?.collected ? groomPhotoSrc(d) : null) || null;
 }
@@ -59,11 +119,11 @@ function lastVisitPhotoSrc(v, d) {
 const telHref = (p) => "tel:" + (p || "").replace(/\s+/g, "");
 const smsHref = (p, body) => "sms:" + (p || "").replace(/\s+/g, "") + "?&body=" + encodeURIComponent(body);
 const thirtyText = (d) =>
-  "Hi " + d.owner.split(" ")[0] + " - " + d.dog + " will be ready in about 30 mins. Feel free to come now and collect your pup! - The Poodle Specialist";
+  "Hi " + ownerFirstName(d.owner) + " - " + smsDogName(d) + " will be ready in about 30 mins. Feel free to come now and collect your pup! - The Poodle Specialist";
 const pickupText = (d) =>
-  "Hi " + d.owner.split(" ")[0] + " - " + d.dog + " is all done and ready for pickup. Come collect your pup whenever suits! - The Poodle Specialist";
+  "Hi " + ownerFirstName(d.owner) + " - " + smsDogName(d) + " is all done and ready for pickup. Come collect your pup whenever suits! - The Poodle Specialist";
 const photoText = (d, url) =>
-  d.dog + " is all done and looking gorgeous! See the photo here: " + (url || "[link]") + " - The Poodle Specialist";
+  smsDogName(d) + " is all done and looking gorgeous! See the photo here: " + (url || "[link]") + " - The Poodle Specialist";
 
 function elapsed(since) {
   if (!since) return null;
@@ -94,6 +154,7 @@ export default function App() {
     syncSquare,
   } = useBoard(session);
   const photoInputRef = useRef(null);
+  const [photoTargetId, setPhotoTargetId] = useState(null);
   const [openId, setOpenId] = useState(null);
   const [filter, setFilter] = useState("all");
   const [showSettings, setShowSettings] = useState(false);
@@ -109,6 +170,11 @@ export default function App() {
     const t = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(t);
   }, []);
+
+  const triggerPhotoUpload = (id) => {
+    setPhotoTargetId(id);
+    photoInputRef.current?.click();
+  };
 
   const listSource = boardMode === "due" ? dueDogs : dogs;
   const open = listSource.find((d) => d.id === openId);
@@ -178,7 +244,7 @@ export default function App() {
   const melDate = now.toLocaleDateString("en-AU", { timeZone: "Australia/Melbourne", weekday: "long", day: "numeric", month: "long" });
   const melTime = now.toLocaleTimeString("en-AU", { timeZone: "Australia/Melbourne", hour: "numeric", minute: "2-digit", hour12: true });
 
-  if (loading || (needsPassword && !session) || (session && boardLoading)) {
+  if (loading || (needsPassword && !session) || (session && boardLoading && dogs.length === 0 && dueDogs.length === 0)) {
     return (
       <div style={{ minHeight: "100vh", background: C.cream, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Poppins, sans-serif", color: C.slate, padding: 24, textAlign: "center" }}>
         {needsPassword ? "Preparing your account…" : "Loading board…"}
@@ -199,6 +265,20 @@ export default function App() {
         @keyframes livepulse { 0%,100% { opacity: 1 } 50% { opacity: 0.45 } }
         .livedot { animation: livepulse 1.8s ease-in-out infinite; }
       `}</style>
+
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file && photoTargetId) uploadPhoto(photoTargetId, file);
+          e.target.value = "";
+          setPhotoTargetId(null);
+        }}
+      />
 
       {/* ===== HEADER ===== */}
       <div style={{ background: C.brown, color: C.cream, padding: "20px 20px 18px", position: "sticky", top: 0, zIndex: 20, borderRadius: "0 0 20px 20px" }}>
@@ -304,8 +384,13 @@ export default function App() {
               <div onClick={() => openSheet(d.id)} style={{ padding: 15, cursor: "pointer", borderLeft: "4px solid " + st.dot }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
                   <div style={{ position: "relative", flexShrink: 0 }}>
-                    <div style={{ width: 56, height: 56, borderRadius: 16, background: d.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 30 }}>{d.avatar}</div>
-                    <div style={{ position: "absolute", bottom: -5, right: -5, minWidth: 22, height: 22, padding: "0 5px", borderRadius: 8, background: C.brown, color: C.gold, fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2.5px solid " + C.paper, fontFamily: "Fraunces, serif" }}>{d.band}</div>
+                    <DogPhotoTile
+                      d={d}
+                      size={56}
+                      onTap={triggerPhotoUpload}
+                      uploading={photoUploading && photoTargetId === d.id}
+                    />
+                    <div style={{ position: "absolute", bottom: -5, right: -5, minWidth: 22, height: 22, padding: "0 5px", borderRadius: 8, background: C.brown, color: C.gold, fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2.5px solid " + C.paper, fontFamily: "Fraunces, serif", pointerEvents: "none" }}>{d.band}</div>
                   </div>
 
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -452,8 +537,13 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
             <button onClick={() => goDog(-1)} disabled={dogIndex() <= 0} style={{ background: C.paper, border: "1px solid " + C.line, color: dogIndex() <= 0 ? C.line : C.brown, borderRadius: 11, width: 36, height: 36, fontSize: 17, fontWeight: 700, flexShrink: 0 }}>‹</button>
             <div style={{ position: "relative", flexShrink: 0 }}>
-              <div style={{ width: 54, height: 54, borderRadius: 16, background: open.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 30 }}>{open.avatar}</div>
-              <div style={{ position: "absolute", bottom: -5, right: -5, minWidth: 22, height: 22, padding: "0 5px", borderRadius: 8, background: C.brown, color: C.gold, fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2.5px solid " + C.cream, fontFamily: "Fraunces, serif" }}>{open.band}</div>
+              <DogPhotoTile
+                d={open}
+                size={54}
+                onTap={!open.readOnly ? triggerPhotoUpload : undefined}
+                uploading={photoUploading && photoTargetId === open.id}
+              />
+              <div style={{ position: "absolute", bottom: -5, right: -5, minWidth: 22, height: 22, padding: "0 5px", borderRadius: 8, background: C.brown, color: C.gold, fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2.5px solid " + C.cream, fontFamily: "Fraunces, serif", pointerEvents: "none" }}>{open.band}</div>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <input
@@ -544,14 +634,31 @@ export default function App() {
                 )}
                 {!open.readOnly && <Hint>Fill once and it’s saved for next time.</Hint>}
                 {!open.readOnly && SPECS.map((s) => <Field key={s.key} label={s.label} placeholder={"Tap a chip or type…"} value={open.specs[s.key]} onChange={(v) => update(open.id, { specs: { ...open.specs, [s.key]: v } })} presets={presets.specs[s.key]} />)}
+                {!open.readOnly && (
+                  <Field
+                    label={FLAG_FIELD.label}
+                    accent={FLAG_FIELD.color}
+                    placeholder={FLAG_FIELD.hint}
+                    value={open.specs.flag}
+                    onChange={(v) => update(open.id, { specs: { ...open.specs, flag: v } })}
+                    presets={presets.specs.flag}
+                  />
+                )}
                 {open.readOnly && SPECS.filter((s) => open.specs[s.key]).map((s) => (
                   <div key={s.key} style={{ marginBottom: 12 }}>
                     <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 700, color: C.goldDeep, marginBottom: 4 }}>{s.label}</div>
                     <div style={{ fontSize: 14, color: C.ink }}>{open.specs[s.key]}</div>
                   </div>
                 ))}
+                {open.readOnly && open.specs.flag && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 700, color: C.amber, marginBottom: 4 }}>{FLAG_FIELD.label}</div>
+                    <div style={{ fontSize: 14, color: C.ink }}>{open.specs.flag}</div>
+                  </div>
+                )}
               </>
             )}
+
             {tab === "checkin" && !open.readOnly && (
               <>
                 <SectionLabel>Arrived?</SectionLabel>
@@ -580,22 +687,10 @@ export default function App() {
                 <a href={smsHref(open.phone, pickupText(open))} style={{ display: "block", textDecoration: "none", textAlign: "center", background: "transparent", color: C.brown, border: "1.5px solid " + C.line, borderRadius: 13, padding: "12px", fontSize: 13.5, fontWeight: 700, marginTop: 9 }}>✉ Or text “all done — ready now”</a>
                 <div style={{ height: 1, background: C.line, margin: "20px 0" }} />
                 <SectionLabel>Finished photo</SectionLabel>
-                <Hint>Saved to {open.dog}’s record, then texted to {open.owner.split(" ")[0]} as a link.</Hint>
-                <input
-                  ref={photoInputRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) uploadPhoto(open.id, file);
-                    e.target.value = "";
-                  }}
-                />
+                <Hint>Saved to {open.dog || "dog"}’s record, then texted to {ownerFirstName(open.owner)} as a link.</Hint>
                 <div style={{ display: "flex", gap: 12 }}>
                   <div
-                    onClick={() => !photoUploading && photoInputRef.current?.click()}
+                    onClick={() => !photoUploading && triggerPhotoUpload(open.id)}
                     style={{ width: 92, height: 92, borderRadius: 15, flexShrink: 0, background: groomPhotoSrc(open) ? "transparent" : C.paper, border: "1.5px " + ((open.groomPhotoPath || groomPhotoSrc(open)) ? "solid " + C.gold : "dashed " + C.line), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: 22, color: C.slate, cursor: photoUploading ? "wait" : "pointer", overflow: "hidden" }}
                   >
                     {groomPhotoSrc(open) ? (
@@ -684,7 +779,9 @@ export default function App() {
           <SectionLabel>Today’s notes</SectionLabel>
           {TAGS.map((t) => <PresetEditor key={t.key} label={t.label} accent={t.color} chips={presets.today[t.key]} onAdd={(c) => addPreset("today", t.key, c)} onRemove={(c) => removePreset("today", t.key, c)} />)}
           <SectionLabel style={{ marginTop: 10 }}>Groom specs</SectionLabel>
-          {["coat", "temperament"].map((k) => <PresetEditor key={k} label={SPECS.find((s) => s.key === k).label} chips={presets.specs[k]} onAdd={(c) => addPreset("specs", k, c)} onRemove={(c) => removePreset("specs", k, c)} />)}
+          {["cut", "coat", "temperament", "health"].map((k) => <PresetEditor key={k} label={(SPECS.find((s) => s.key === k) || FLAG_FIELD).label} chips={presets.specs[k]} onAdd={(c) => addPreset("specs", k, c)} onRemove={(c) => removePreset("specs", k, c)} />)}
+          <SectionLabel style={{ marginTop: 10 }}>Next time flags</SectionLabel>
+          <PresetEditor label={FLAG_FIELD.label} accent={FLAG_FIELD.color} chips={presets.specs.flag} onAdd={(c) => addPreset("specs", "flag", c)} onRemove={(c) => removePreset("specs", "flag", c)} />
           <button
             onClick={async () => { await signOut(); setShowSettings(false); }}
             style={{ width: "100%", background: C.paper, color: C.rose, border: "1px solid " + C.rose + "55", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 16 }}

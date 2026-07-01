@@ -1,14 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { todayMelbourneDateString, formatVisitDate } from "../lib/dates";
 import { chipsToPresets, patchToDb, rowToBoardDog } from "../lib/boardData";
+import { defaultPresetsFromDefinitions, mergePresetsWithDefaults } from "../lib/presetChipDefaults.js";
+import { ensurePresetChips } from "../lib/seedPresetChips.js";
 import { uploadGroomPhoto, getGroomPhotoDisplayUrl, signPhotoPathMap } from "../lib/groomPhotos.js";
 import { computeDueToRebook, dueEntryToBoardDog } from "../lib/dueToRebook.js";
 
-const DEFAULT_PRESETS = {
-  today: { cut: [], watch: [], svc: [] },
-  specs: { coat: [], temperament: [] },
-};
+const DEFAULT_PRESETS = defaultPresetsFromDefinitions();
 
 async function attachPhotoUrls(rows) {
   const paths = [];
@@ -43,9 +42,15 @@ export function useBoard(session) {
   const [boardNotice, setBoardNotice] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
+  const boardModeRef = useRef(boardMode);
+  const presetChipsSeededRef = useRef(false);
+  const loadedForUserRef = useRef(null);
+
+  boardModeRef.current = boardMode;
 
   const loadBoard = useCallback(async () => {
-    if (!session) return;
+    const { data: { session: s } } = await supabase.auth.getSession();
+    if (!s) return;
     setBoardError("");
     const date = todayMelbourneDateString();
 
@@ -77,6 +82,15 @@ export function useBoard(session) {
       }
     }
 
+    if (!presetChipsSeededRef.current) {
+      try {
+        await ensurePresetChips(supabase);
+        presetChipsSeededRef.current = true;
+      } catch (e) {
+        console.warn("Could not seed preset chips:", e.message);
+      }
+    }
+
     const { data: chipRows, error: chipErr } = await supabase
       .from("preset_chips")
       .select("*");
@@ -85,11 +99,12 @@ export function useBoard(session) {
 
     const mapped = todayRows.map((a) => rowToBoardDog(a, visitByDog[a.dog_id]));
     setDogs(await attachPhotoUrls(mapped));
-    setPresets(chipsToPresets(chipRows));
-  }, [session]);
+    setPresets(mergePresetsWithDefaults(chipsToPresets(chipRows)));
+  }, []);
 
   const loadDueDogs = useCallback(async () => {
-    if (!session) return;
+    const { data: { session: s } } = await supabase.auth.getSession();
+    if (!s) return;
     setBoardError("");
     const today = todayMelbourneDateString();
 
@@ -118,22 +133,33 @@ export function useBoard(session) {
 
     const mapped = dueEntries.map((e) => dueEntryToBoardDog(e, visitByDog[e.dogId]));
     setDueDogs(await attachPhotoUrls(mapped));
-  }, [session]);
+  }, []);
+
+  const refreshBoard = useCallback(() => {
+    const load = boardModeRef.current === "due" ? loadDueDogs : loadBoard;
+    load().catch((e) => setBoardError(e.message || "Could not refresh board data."));
+  }, [loadBoard, loadDueDogs]);
 
   useEffect(() => {
-    if (!session) {
+    const userId = session?.user?.id;
+
+    if (!userId) {
       setDogs([]);
       setDueDogs([]);
       setBoardLoading(false);
+      loadedForUserRef.current = null;
+      presetChipsSeededRef.current = false;
       return;
     }
 
     let mounted = true;
-    setBoardLoading(true);
+    const isFirstLoadForUser = loadedForUserRef.current !== userId;
+    if (isFirstLoadForUser) {
+      loadedForUserRef.current = userId;
+      setBoardLoading(true);
+    }
 
-    const load = boardMode === "due" ? loadDueDogs() : loadBoard();
-
-    load
+    Promise.all([loadBoard(), loadDueDogs()])
       .catch((e) => {
         if (mounted) setBoardError(e.message || "Could not load board data.");
       })
@@ -143,26 +169,32 @@ export function useBoard(session) {
 
     const channel = supabase
       .channel("board-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointments" }, () => {
-        if (boardMode === "due") loadDueDogs();
-        else loadBoard();
+      .on("postgres_changes", { event: "*", schema: "public", table: "appointments" }, refreshBoard)
+      .on("postgres_changes", { event: "*", schema: "public", table: "dogs" }, refreshBoard)
+      .on("postgres_changes", { event: "*", schema: "public", table: "visits" }, refreshBoard)
+      .on("postgres_changes", { event: "*", schema: "public", table: "preset_chips" }, () => {
+        loadBoard().catch(() => {});
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "dogs" }, () => {
-        if (boardMode === "due") loadDueDogs();
-        else loadBoard();
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "visits" }, () => {
-        if (boardMode === "due") loadDueDogs();
-        else loadBoard();
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "preset_chips" }, () => loadBoard())
       .subscribe();
 
     return () => {
       mounted = false;
       supabase.removeChannel(channel);
     };
-  }, [session, boardMode, loadBoard, loadDueDogs]);
+  }, [session?.user?.id, loadBoard, loadDueDogs, refreshBoard]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId) return;
+
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      Promise.all([loadBoard(), loadDueDogs()]).catch(() => {});
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [session?.user?.id, loadBoard, loadDueDogs]);
 
   const persistPatch = async (id, patch, current) => {
     if (current.readOnly) return;
@@ -347,14 +379,25 @@ export function useBoard(session) {
   const addPreset = async (group, key, chip) => {
     const v = (chip || "").trim();
     if (!v) return;
-    const next = [...presets[group][key], v];
-    setPresets((p) => ({ ...p, [group]: { ...p[group], [key]: next } }));
+    const current = presets[group]?.[key] || [];
+    if (current.some((c) => c.toLowerCase() === v.toLowerCase())) return;
+    const next = [...current, v];
+    setPresets((p) => ({
+      ...p,
+      [group]: { ...p[group], [key]: next },
+    }));
 
-    const { error } = await supabase
+    const { data: row } = await supabase
       .from("preset_chips")
-      .update({ chips: next })
+      .select("id")
       .eq("group_name", group)
-      .eq("key", key);
+      .eq("key", key)
+      .maybeSingle();
+
+    const { error } = row
+      ? await supabase.from("preset_chips").update({ chips: next }).eq("id", row.id)
+      : await supabase.from("preset_chips").insert({ group_name: group, key, chips: next });
+
     if (error) {
       setBoardError("Could not save preset chips.");
       loadBoard();
@@ -362,14 +405,26 @@ export function useBoard(session) {
   };
 
   const removePreset = async (group, key, chip) => {
-    const next = presets[group][key].filter((x) => x !== chip);
-    setPresets((p) => ({ ...p, [group]: { ...p[group], [key]: next } }));
+    const current = presets[group]?.[key] || [];
+    const next = current.filter((x) => x !== chip);
+    setPresets((p) => ({
+      ...p,
+      [group]: { ...p[group], [key]: next },
+    }));
+
+    const { data: row } = await supabase
+      .from("preset_chips")
+      .select("id")
+      .eq("group_name", group)
+      .eq("key", key)
+      .maybeSingle();
+
+    if (!row) return;
 
     const { error } = await supabase
       .from("preset_chips")
       .update({ chips: next })
-      .eq("group_name", group)
-      .eq("key", key);
+      .eq("id", row.id);
     if (error) {
       setBoardError("Could not save preset chips.");
       loadBoard();

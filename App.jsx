@@ -3,6 +3,7 @@ import { useAuth } from "./contexts/AuthContext.jsx";
 import { useBoard } from "./hooks/useBoard.js";
 import Login from "./components/Login.jsx";
 import SetPassword from "./components/SetPassword.jsx";
+import { AppLoadingScreen } from "./components/BrandLogo.jsx";
 
 // The Poodle Specialist — Grooming Board
 
@@ -246,9 +247,7 @@ export default function App() {
 
   if (loading || (needsPassword && !session) || (session && boardLoading && dogs.length === 0 && dueDogs.length === 0)) {
     return (
-      <div style={{ minHeight: "100vh", background: C.cream, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Poppins, sans-serif", color: C.slate, padding: 24, textAlign: "center" }}>
-        {needsPassword ? "Preparing your account…" : "Loading board…"}
-      </div>
+      <AppLoadingScreen message={needsPassword ? "Preparing your account…" : "Loading board…"} />
     );
   }
 

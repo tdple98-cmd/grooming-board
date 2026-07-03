@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { BrandLogo } from "./BrandLogo.jsx";
 
 const C = {
   cream: "#F4EFE7",
@@ -65,6 +66,10 @@ export default function SetPassword() {
         input { font-family: Poppins, sans-serif; }
         button { font-family: Poppins, sans-serif; cursor: pointer; }
       `}</style>
+
+      <div style={{ marginBottom: 22, textAlign: "center" }}>
+        <BrandLogo maxWidth={220} />
+      </div>
 
       <div style={{ background: C.brown, color: C.cream, borderRadius: 20, padding: "28px 24px 32px" }}>
         <div style={{ fontSize: 9.5, letterSpacing: 3, textTransform: "uppercase", color: C.gold, fontWeight: 600 }}>

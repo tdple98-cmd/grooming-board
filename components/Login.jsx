@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { getSupabaseConfigStatus, isSupabaseConfigured } from "../lib/supabase";
+import { BrandLogo } from "./BrandLogo.jsx";
 
 const C = {
   cream: "#F4EFE7",
@@ -70,11 +71,12 @@ export default function Login() {
         button { font-family: Poppins, sans-serif; cursor: pointer; }
       `}</style>
 
-      <div style={{ background: C.brown, color: C.cream, borderRadius: 20, padding: "28px 24px 32px" }}>
-        <div style={{ fontSize: 9.5, letterSpacing: 3, textTransform: "uppercase", color: C.gold, fontWeight: 600 }}>
-          The Poodle Specialist
-        </div>
-        <div style={{ fontFamily: "Fraunces, serif", fontSize: 28, fontWeight: 600, marginTop: 4 }}>
+      <div style={{ marginBottom: 22, textAlign: "center" }}>
+        <BrandLogo maxWidth={248} />
+      </div>
+
+      <div style={{ background: C.brown, color: C.cream, borderRadius: 20, padding: "24px 24px 28px" }}>
+        <div style={{ fontFamily: "Fraunces, serif", fontSize: 26, fontWeight: 600 }}>
           Grooming Board
         </div>
         <p style={{ fontSize: 13, color: "rgba(244,239,231,0.7)", marginTop: 8, lineHeight: 1.45 }}>

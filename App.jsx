@@ -4,6 +4,8 @@ import { useBoard } from "./hooks/useBoard.js";
 import Login from "./components/Login.jsx";
 import SetPassword from "./components/SetPassword.jsx";
 import { AppLoadingScreen } from "./components/BrandLogo.jsx";
+import { EditField, PresetEditor } from "./components/EditField.jsx";
+import { LazyImage } from "./components/LazyImage.jsx";
 
 // The Poodle Specialist — Grooming Board
 
@@ -42,16 +44,10 @@ const SPECS = [
 
 const FLAG_FIELD = { key: "flag", label: "Flag for next time", hint: "Tap chips or type — saved for next visit", color: C.amber };
 
-function toggleChip(current, chip) {
-  const parts = (current || "").split(",").map((s) => s.trim()).filter(Boolean);
-  const i = parts.findIndex((p) => p.toLowerCase() === chip.toLowerCase());
-  if (i >= 0) parts.splice(i, 1); else parts.push(chip);
-  return parts.join(", ");
-}
-const chipActive = (cur, chip) =>
-  (cur || "").split(",").map((s) => s.trim().toLowerCase()).includes(chip.toLowerCase());
-
-function groomPhotoSrc(d) {
+function groomPhotoSrc(d, { preferThumb = false } = {}) {
+  if (preferThumb) {
+    return d?.groomPhotoThumbUrl || d?.groomPhotoUrl || d?.groomPhotoPreviewUrl || null;
+  }
   return d?.groomPhotoUrl || d?.groomPhotoPreviewUrl || null;
 }
 
@@ -74,8 +70,8 @@ function smsDogName(d) {
   return isPlaceholderDogName(d.dog, d.owner) ? "your Pups" : d.dog;
 }
 
-function DogPhotoTile({ d, size, onTap, uploading }) {
-  const src = groomPhotoSrc(d);
+function DogPhotoTile({ d, size, onTap, uploading, lazy = true, preferThumb = true }) {
+  const src = groomPhotoSrc(d, { preferThumb });
   const canTap = onTap && !d.readOnly && !d.dueRebook;
   return (
     <div
@@ -98,7 +94,11 @@ function DogPhotoTile({ d, size, onTap, uploading }) {
       }}
     >
       {src ? (
-        <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        lazy ? (
+          <LazyImage src={src} alt="" style={{ width: "100%", height: "100%" }} />
+        ) : (
+          <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        )
       ) : uploading ? (
         <span style={{ fontSize: 11, color: C.slate, fontWeight: 600 }}>…</span>
       ) : (
@@ -113,7 +113,10 @@ function DogPhotoTile({ d, size, onTap, uploading }) {
   );
 }
 
-function lastVisitPhotoSrc(v, d) {
+function lastVisitPhotoSrc(v, d, { preferThumb = false } = {}) {
+  if (preferThumb) {
+    return v?.photoThumbUrl || v?.photoUrl || (d?.collected ? groomPhotoSrc(d, { preferThumb: true }) : null) || null;
+  }
   return v?.photoUrl || (d?.collected ? groomPhotoSrc(d) : null) || null;
 }
 
@@ -153,8 +156,15 @@ export default function App() {
     addPreset,
     removePreset,
     syncSquare,
+    registerEdit,
+    toggleLiveSync,
+    liveBadgeOn,
+    liveBadgeColor,
+    liveBadgeLabel,
+    lastSyncedAt,
   } = useBoard(session);
   const photoInputRef = useRef(null);
+  const galleryInputRef = useRef(null);
   const [photoTargetId, setPhotoTargetId] = useState(null);
   const [openId, setOpenId] = useState(null);
   const [filter, setFilter] = useState("all");
@@ -163,7 +173,6 @@ export default function App() {
   const [tab, setTab] = useState("today");
   const [menuId, setMenuId] = useState(null);
   const [now, setNow] = useState(new Date());
-  const [live, setLive] = useState(true);
   const [petNameDraft, setPetNameDraft] = useState("");
   const [finishingPickup, setFinishingPickup] = useState(false);
 
@@ -174,8 +183,34 @@ export default function App() {
 
   const triggerPhotoUpload = (id) => {
     setPhotoTargetId(id);
+    setMenuId("photo_" + id);
+  };
+
+  const pickPhotoFromCamera = () => {
+    const id = photoTargetId || menuId?.replace(/^photo_/, "");
+    if (id) setPhotoTargetId(id);
+    setMenuId(null);
     photoInputRef.current?.click();
   };
+
+  const pickPhotoFromGallery = () => {
+    const id = photoTargetId || menuId?.replace(/^photo_/, "");
+    if (id) setPhotoTargetId(id);
+    setMenuId(null);
+    galleryInputRef.current?.click();
+  };
+
+  const handlePhotoFile = (file) => {
+    if (file && photoTargetId) uploadPhoto(photoTargetId, file);
+    setPhotoTargetId(null);
+  };
+
+  const editFieldProps = (apptId, field) => ({
+    editKey: `${apptId}:field:${field}`,
+    onEditStart: (key) => registerEdit(key, true),
+    onEditEnd: (key) => registerEdit(key, false),
+    colors: C,
+  });
 
   const listSource = boardMode === "due" ? dueDogs : dogs;
   const open = listSource.find((d) => d.id === openId);
@@ -272,10 +307,18 @@ export default function App() {
         capture="environment"
         style={{ display: "none" }}
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file && photoTargetId) uploadPhoto(photoTargetId, file);
+          handlePhotoFile(e.target.files?.[0]);
           e.target.value = "";
-          setPhotoTargetId(null);
+        }}
+      />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          handlePhotoFile(e.target.files?.[0]);
+          e.target.value = "";
         }}
       />
 
@@ -286,9 +329,45 @@ export default function App() {
             <div style={{ fontSize: 9.5, letterSpacing: 3, textTransform: "uppercase", color: C.gold, fontWeight: 600 }}>The Poodle Specialist</div>
             <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 3 }}>
               <div style={{ fontFamily: "Fraunces, serif", fontSize: 28, fontWeight: 600 }}>Grooming Board</div>
-              <button onClick={() => setLive((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 5, background: (live ? C.green : C.rose) + "26", border: "1px solid " + (live ? C.green : C.rose) + "66", borderRadius: 999, padding: "3px 9px 3px 8px", cursor: "pointer" }}>
-                <span className={live ? "livedot" : ""} style={{ width: 8, height: 8, borderRadius: 999, background: live ? C.green : C.rose, boxShadow: live ? "0 0 0 3px " + C.green + "33" : "none" }} />
-                <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: live ? C.green : C.rose }}>{live ? "LIVE" : "OFFLINE"}</span>
+              <button
+                type="button"
+                onClick={toggleLiveSync}
+                title={
+                  liveBadgeOn
+                    ? "Live sync on — tap to pause auto-updates"
+                    : "Live sync paused — tap to enable real-time updates"
+                }
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 5,
+                  background: (liveBadgeColor === "green" ? C.green : C.amber) + "26",
+                  border: "1px solid " + (liveBadgeColor === "green" ? C.green : C.amber) + "66",
+                  borderRadius: 999,
+                  padding: "3px 9px 3px 8px",
+                  cursor: "pointer",
+                }}
+              >
+                <span
+                  className={liveBadgeOn ? "livedot" : ""}
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 999,
+                    background: liveBadgeColor === "green" ? C.green : C.amber,
+                    boxShadow: liveBadgeOn ? "0 0 0 3px " + C.green + "33" : "none",
+                  }}
+                />
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 800,
+                    letterSpacing: 1,
+                    color: liveBadgeColor === "green" ? C.green : C.amber,
+                  }}
+                >
+                  {liveBadgeLabel}
+                </span>
               </button>
             </div>
             <div style={{ fontSize: 12, color: "rgba(244,239,231,0.65)", marginTop: 2 }}>{melDate} · <span style={{ color: C.gold, fontWeight: 600 }}>{melTime}</span></div>
@@ -378,7 +457,7 @@ export default function App() {
           const hasToday = d.today.cut || d.today.watch || d.today.svc;
 
           return (
-            <div key={d.id} style={{ background: C.paper, borderRadius: 18, marginBottom: 12, border: "1px solid " + C.line, overflow: "hidden", boxShadow: "0 2px 10px rgba(42,36,32,0.05)", opacity: (d.collected || d.status === "noshow") ? 0.55 : 1 }}>
+            <div key={d.id} style={{ background: C.paper, borderRadius: 18, marginBottom: 12, border: "1px solid " + C.line, overflow: (menuId === "s_" + d.id || menuId === "p_" + d.id) ? "visible" : "hidden", boxShadow: "0 2px 10px rgba(42,36,32,0.05)", opacity: (d.collected || d.status === "noshow") ? 0.55 : 1, position: "relative", zIndex: (menuId === "s_" + d.id || menuId === "p_" + d.id) ? 25 : "auto" }}>
               {/* tap target: opens details */}
               <div onClick={() => openSheet(d.id)} style={{ padding: 15, cursor: "pointer", borderLeft: "4px solid " + st.dot }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
@@ -502,7 +581,7 @@ export default function App() {
                       <a href={smsHref(d.phone, thirtyText(d))} style={{ ...bigBtn(C.green), flex: "0 0 auto", textDecoration: "none", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "14px 16px" }}>⏱ 30 mins</a>
                     )}
 
-                    {/* When READY, an extra pickup-actions dropdown */}
+                    {/* When READY, pickup dropdown (photo + picked up) */}
                     {d.status === "ready" && (
                       <div style={{ flex: 1, position: "relative" }}>
                         <button onClick={() => setMenuId(menuId === "p_" + d.id ? null : "p_" + d.id)} style={bigBtn(C.green)}>🐾 Pickup ▾</button>
@@ -510,9 +589,6 @@ export default function App() {
                           <>
                             <div onClick={() => setMenuId(null)} style={{ position: "fixed", inset: 0, zIndex: 29 }} />
                             <div style={{ position: "absolute", left: 0, right: 0, bottom: "calc(100% + 8px)", zIndex: 30, background: C.paper, border: "1px solid " + C.line, borderRadius: 14, boxShadow: "0 10px 30px rgba(42,36,32,0.2)", overflow: "hidden" }}>
-                              <a href={smsHref(d.phone, thirtyText(d))} onClick={() => setMenuId(null)} style={menuRow}>⏱ Text “30 mins — come now”</a>
-                              <a href={smsHref(d.phone, pickupText(d))} onClick={() => setMenuId(null)} style={menuRow}>✉ Text owner “ready”</a>
-                              <a href={telHref(d.phone)} onClick={() => setMenuId(null)} style={menuRow}>☎ Call owner</a>
                               <button onClick={() => { setMenuId(null); openSheet(d.id); setTab("pickup"); }} style={{ ...menuRow, width: "100%", background: "none", border: "none", textAlign: "left" }}>📷 Send finished photo</button>
                               <button onClick={() => { update(d.id, { collected: true }); setMenuId(null); }} style={{ ...menuRow, width: "100%", background: "none", border: "none", borderTop: "1px solid " + C.line, color: C.green, textAlign: "left", fontWeight: 700 }}>✓ Picked up — done</button>
                             </div>
@@ -541,6 +617,8 @@ export default function App() {
                 size={54}
                 onTap={!open.readOnly ? triggerPhotoUpload : undefined}
                 uploading={photoUploading && photoTargetId === open.id}
+                preferThumb={false}
+                lazy={false}
               />
               <div style={{ position: "absolute", bottom: -5, right: -5, minWidth: 22, height: 22, padding: "0 5px", borderRadius: 8, background: C.brown, color: C.gold, fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2.5px solid " + C.cream, fontFamily: "Fraunces, serif", pointerEvents: "none" }}>{open.band}</div>
             </div>
@@ -596,8 +674,8 @@ export default function App() {
           <div style={{ paddingTop: 16 }}>
             {tab === "today" && (
               <>
-                <Hint>Only fill what’s different today. Empty = do {open.dog}’s usual.</Hint>
-                {TAGS.map((t) => <Field key={t.key} label={t.label} accent={t.color} placeholder={t.hint} value={open.today[t.key]} onChange={(v) => update(open.id, { today: { ...open.today, [t.key]: v } })} presets={presets.today[t.key]} />)}
+                <Hint>Tap chips or Add — only what’s different today.</Hint>
+                {TAGS.map((t) => <EditField key={t.key} label={t.label} accent={t.color} placeholder="Type and Add…" value={open.today[t.key]} onChange={(v) => update(open.id, { today: { ...open.today, [t.key]: v } })} presets={presets.today[t.key]} {...editFieldProps(open.id, "today")} />)}
               </>
             )}
             {(tab === "specs" || open.readOnly) && (
@@ -631,16 +709,17 @@ export default function App() {
                     <div style={{ fontSize: 13, color: C.slate, fontStyle: "italic" }}>First visit — no history yet. After this groom, it’ll show here next time.</div>
                   </div>
                 )}
-                {!open.readOnly && <Hint>Fill once and it’s saved for next time.</Hint>}
-                {!open.readOnly && SPECS.map((s) => <Field key={s.key} label={s.label} placeholder={"Tap a chip or type…"} value={open.specs[s.key]} onChange={(v) => update(open.id, { specs: { ...open.specs, [s.key]: v } })} presets={presets.specs[s.key]} />)}
+                {!open.readOnly && <Hint>Tap chips or Add — saved for next visit.</Hint>}
+                {!open.readOnly && SPECS.map((s) => <EditField key={s.key} label={s.label} placeholder="Type and Add…" value={open.specs[s.key]} onChange={(v) => update(open.id, { specs: { ...open.specs, [s.key]: v } })} presets={presets.specs[s.key]} {...editFieldProps(open.id, "specs")} />)}
                 {!open.readOnly && (
-                  <Field
+                  <EditField
                     label={FLAG_FIELD.label}
                     accent={FLAG_FIELD.color}
-                    placeholder={FLAG_FIELD.hint}
+                    placeholder="Type and Add…"
                     value={open.specs.flag}
                     onChange={(v) => update(open.id, { specs: { ...open.specs, flag: v } })}
                     presets={presets.specs.flag}
+                    {...editFieldProps(open.id, "specs")}
                   />
                 )}
                 {open.readOnly && SPECS.filter((s) => open.specs[s.key]).map((s) => (
@@ -770,17 +849,23 @@ export default function App() {
           <button
             onClick={syncSquare}
             disabled={syncing}
-            style={{ width: "100%", background: syncing ? C.slate : C.gold, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 12, marginBottom: 16 }}
+            style={{ width: "100%", background: syncing ? C.slate : C.gold, color: "#fff", border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 12, marginBottom: 8 }}
           >
             {syncing ? "Syncing from Square…" : "Sync from Square"}
           </button>
+          <div style={{ fontSize: 12, color: C.slate, marginBottom: 16, lineHeight: 1.35, textAlign: "center" }}>
+            {lastSyncedAt
+              ? `Board updated ${Math.max(0, Math.round((Date.now() - lastSyncedAt) / 60000))} min ago`
+              : "Waiting for first load…"}
+            {liveBadgeOn ? " · Live sync on" : " · Live sync paused"}
+          </div>
           <Hint>Edit the quick-pick chips your team taps. Add the ones you say all day; remove the rest.</Hint>
           <SectionLabel>Today’s notes</SectionLabel>
-          {TAGS.map((t) => <PresetEditor key={t.key} label={t.label} accent={t.color} chips={presets.today[t.key]} onAdd={(c) => addPreset("today", t.key, c)} onRemove={(c) => removePreset("today", t.key, c)} />)}
+          {TAGS.map((t) => <PresetEditor key={t.key} label={t.label} accent={t.color} chips={presets.today[t.key]} onAdd={(c) => addPreset("today", t.key, c)} onRemove={(c) => removePreset("today", t.key, c)} colors={C} />)}
           <SectionLabel style={{ marginTop: 10 }}>Groom specs</SectionLabel>
-          {["cut", "coat", "temperament", "health"].map((k) => <PresetEditor key={k} label={(SPECS.find((s) => s.key === k) || FLAG_FIELD).label} chips={presets.specs[k]} onAdd={(c) => addPreset("specs", k, c)} onRemove={(c) => removePreset("specs", k, c)} />)}
+          {["cut", "coat", "temperament", "health"].map((k) => <PresetEditor key={k} label={(SPECS.find((s) => s.key === k) || FLAG_FIELD).label} chips={presets.specs[k]} onAdd={(c) => addPreset("specs", k, c)} onRemove={(c) => removePreset("specs", k, c)} colors={C} />)}
           <SectionLabel style={{ marginTop: 10 }}>Next time flags</SectionLabel>
-          <PresetEditor label={FLAG_FIELD.label} accent={FLAG_FIELD.color} chips={presets.specs.flag} onAdd={(c) => addPreset("specs", "flag", c)} onRemove={(c) => removePreset("specs", "flag", c)} />
+          <PresetEditor label={FLAG_FIELD.label} accent={FLAG_FIELD.color} chips={presets.specs.flag} onAdd={(c) => addPreset("specs", "flag", c)} onRemove={(c) => removePreset("specs", "flag", c)} colors={C} />
           <button
             onClick={async () => { await signOut(); setShowSettings(false); }}
             style={{ width: "100%", background: C.paper, color: C.rose, border: "1px solid " + C.rose + "55", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 16 }}
@@ -789,6 +874,17 @@ export default function App() {
           </button>
           <button onClick={() => setShowSettings(false)} style={{ width: "100%", background: C.brown, color: C.cream, border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 10 }}>Done</button>
         </Sheet>
+      )}
+
+      {menuId?.startsWith("photo_") && (
+        <div onClick={() => setMenuId(null)} style={{ position: "fixed", inset: 0, background: "rgba(42,36,32,0.5)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, borderRadius: 20, width: "100%", maxWidth: 320, padding: 18, boxShadow: "0 20px 50px rgba(42,36,32,0.3)" }}>
+            <div style={{ fontFamily: "Fraunces, serif", fontSize: 19, fontWeight: 600, marginBottom: 12 }}>Add photo</div>
+            <button onClick={pickPhotoFromCamera} style={{ ...bigBtn(C.brown), width: "100%", marginBottom: 10 }}>📷 Take photo</button>
+            <button onClick={pickPhotoFromGallery} style={{ ...bigBtn(C.gold), width: "100%" }}>🖼 Choose from library</button>
+            <button onClick={() => setMenuId(null)} style={{ width: "100%", background: "none", border: "none", color: C.slate, marginTop: 12, fontSize: 14, fontWeight: 600 }}>Cancel</button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -860,50 +956,6 @@ function Sheet({ children, onClose }) {
           <div style={{ fontSize: 11, color: C.slate, marginTop: 6 }}>Swipe down to close</div>
         </div>
         {children}
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, value, onChange, placeholder, accent, presets }) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
-        {accent && <span style={{ width: 9, height: 9, borderRadius: 3, background: accent }} />}
-        <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
-      </div>
-      {presets && presets.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 9 }}>
-          {presets.map((chip) => {
-            const active = chipActive(value, chip);
-            return <button key={chip} onClick={() => onChange(toggleChip(value, chip))} style={{ background: active ? (accent || C.gold) : C.paper, color: active ? "#fff" : C.ink, border: "1px solid " + (active ? (accent || C.gold) : C.line), borderRadius: 999, padding: "8px 14px", fontSize: 12.5, fontWeight: active ? 700 : 500 }}>{active ? "✓ " : ""}{chip}</button>;
-          })}
-        </div>
-      )}
-      <textarea value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={value && value.length > 38 ? 2 : 1} style={{ width: "100%", border: "1px solid " + C.line, borderRadius: 12, padding: "12px 14px", fontSize: 15, color: C.ink, background: "#fff", resize: "vertical", lineHeight: 1.4, outline: "none" }} />
-    </div>
-  );
-}
-
-function PresetEditor({ label, accent, chips, onAdd, onRemove }) {
-  const [draft, setDraft] = useState("");
-  const submit = () => { onAdd(draft); setDraft(""); };
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
-        {accent && <span style={{ width: 9, height: 9, borderRadius: 3, background: accent }} />}
-        <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
-      </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 9 }}>
-        {chips.map((c) => (
-          <span key={c} style={{ display: "inline-flex", alignItems: "center", gap: 7, background: C.paper, border: "1px solid " + C.line, borderRadius: 999, padding: "6px 7px 6px 13px", fontSize: 12.5 }}>
-            {c}<button onClick={() => onRemove(c)} style={{ background: C.line, border: "none", borderRadius: 999, width: 19, height: 19, fontSize: 13, color: C.brown, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
-          </span>
-        ))}
-      </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} placeholder="Add a chip…" style={{ flex: 1, border: "1px solid " + C.line, borderRadius: 12, padding: "10px 13px", fontSize: 14, background: "#fff", outline: "none" }} />
-        <button onClick={submit} style={{ background: accent || C.gold, color: "#fff", border: "none", borderRadius: 12, padding: "0 20px", fontSize: 14, fontWeight: 700 }}>Add</button>
       </div>
     </div>
   );

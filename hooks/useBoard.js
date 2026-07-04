@@ -3,10 +3,28 @@ import { supabase } from "../lib/supabase";
 import { todayMelbourneDateString, formatVisitDate } from "../lib/dates";
 import { chipsToPresets, patchToDb, rowToBoardDog } from "../lib/boardData";
 import { defaultPresetsFromDefinitions, mergePresetsWithDefaults } from "../lib/presetChipDefaults.js";
-import { uploadGroomPhoto, getGroomPhotoDisplayUrl, signPhotoPathMap } from "../lib/groomPhotos.js";
+import {
+  uploadGroomPhoto,
+  getGroomPhotoDisplayUrl,
+  getGroomPhotoThumbUrl,
+  signPhotoDisplayMap,
+  startPhotoUrlRefreshLoop,
+} from "../lib/groomPhotos.js";
 import { computeDueToRebook, dueEntryToBoardDog } from "../lib/dueToRebook.js";
+import {
+  dedupeBoardDogs,
+  fetchAppointmentsByIds,
+  fetchLatestVisitsByDog,
+  fetchTodayAppointments,
+  mapRowsToBoardDogs,
+} from "../lib/boardFetch.js";
+import { createEditGuard, mergeDogLists, patchDogOnList } from "../lib/boardMerge.js";
+import { isRealtimeLive, subscribeBoardRealtime } from "../lib/boardRealtime.js";
+import { readLiveSyncEnabled, writeLiveSyncEnabled } from "../lib/liveSyncPreference.js";
 
 const DEFAULT_PRESETS = defaultPresetsFromDefinitions();
+const SPOT_CHECK_MIN_MS = 8 * 60 * 1000;
+const SPOT_CHECK_MAX_MS = 15 * 60 * 1000;
 
 async function attachPhotoUrls(rows) {
   const paths = [];
@@ -14,18 +32,27 @@ async function attachPhotoUrls(rows) {
     if (row.groomPhotoPath) paths.push(row.groomPhotoPath);
     if (row.lastVisit?.photoPath) paths.push(row.lastVisit.photoPath);
   }
-  const map = await signPhotoPathMap(paths);
+  const { full, thumb } = await signPhotoDisplayMap(paths);
   return rows.map((row) => ({
     ...row,
     groomPhotoUrl: row.groomPhotoPath
-      ? map[row.groomPhotoPath] || row.groomPhotoUrl || null
+      ? full[row.groomPhotoPath] || row.groomPhotoUrl || null
       : row.groomPhotoUrl || null,
+    groomPhotoThumbUrl: row.groomPhotoPath
+      ? thumb[row.groomPhotoPath] || full[row.groomPhotoPath] || row.groomPhotoThumbUrl || null
+      : row.groomPhotoThumbUrl || null,
     lastVisit: row.lastVisit
       ? {
           ...row.lastVisit,
           photoUrl: row.lastVisit.photoPath
-            ? map[row.lastVisit.photoPath] || row.lastVisit.photoUrl || null
+            ? full[row.lastVisit.photoPath] || row.lastVisit.photoUrl || null
             : row.lastVisit.photoUrl || null,
+          photoThumbUrl: row.lastVisit.photoPath
+            ? thumb[row.lastVisit.photoPath] ||
+              full[row.lastVisit.photoPath] ||
+              row.lastVisit.photoThumbUrl ||
+              null
+            : row.lastVisit.photoThumbUrl || null,
         }
       : null,
   }));
@@ -41,58 +68,64 @@ export function useBoard(session) {
   const [boardNotice, setBoardNotice] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState("CONNECTING");
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const [liveSyncEnabled, setLiveSyncEnabled] = useState(() => readLiveSyncEnabled());
+
   const boardModeRef = useRef(boardMode);
   const loadedForUserRef = useRef(null);
+  const editGuardRef = useRef(createEditGuard());
+  const liveSyncRef = useRef(liveSyncEnabled);
+  const spotCheckRunningRef = useRef(false);
 
   boardModeRef.current = boardMode;
+  liveSyncRef.current = liveSyncEnabled;
+
+  const touchSynced = useCallback(() => {
+    setLastSyncedAt(Date.now());
+  }, []);
+
+  const toggleLiveSync = useCallback(() => {
+    setLiveSyncEnabled((on) => {
+      const next = !on;
+      writeLiveSyncEnabled(next);
+      if (!next) setRealtimeStatus("PAUSED");
+      return next;
+    });
+  }, []);
+
+  const loadPresets = useCallback(async () => {
+    const { data: chipRows, error } = await supabase.from("preset_chips").select("*");
+    if (error) throw error;
+    setPresets(mergePresetsWithDefaults(chipsToPresets(chipRows)));
+  }, []);
 
   const loadBoard = useCallback(async () => {
-    const { data: { session: s } } = await supabase.auth.getSession();
+    const {
+      data: { session: s },
+    } = await supabase.auth.getSession();
     if (!s) return;
     setBoardError("");
     const date = todayMelbourneDateString();
 
-    const { data: appointments, error: apptErr } = await supabase
-      .from("appointments")
-      .select("*, dogs(*)")
-      .eq("appointment_date", date)
-      .order("band", { ascending: true });
-
-    if (apptErr) throw apptErr;
-
-    const todayRows = (appointments || []).filter(
-      (a) => String(a.appointment_date).slice(0, 10) === date
-    );
-
+    const todayRows = await fetchTodayAppointments(date);
     const dogIds = [...new Set(todayRows.map((a) => a.dog_id).filter(Boolean))];
-    let visitByDog = {};
+    const visitByDog = await fetchLatestVisitsByDog(dogIds);
 
-    if (dogIds.length) {
-      const { data: visits, error: visitErr } = await supabase
-        .from("visits")
-        .select("*")
-        .in("dog_id", dogIds)
-        .order("visit_date", { ascending: false });
+    const mapped = dedupeBoardDogs(mapRowsToBoardDogs(todayRows, visitByDog));
+    const withPhotos = await attachPhotoUrls(mapped);
 
-      if (visitErr) throw visitErr;
-      for (const v of visits || []) {
-        if (!visitByDog[v.dog_id]) visitByDog[v.dog_id] = v;
-      }
-    }
-
-    const { data: chipRows, error: chipErr } = await supabase
-      .from("preset_chips")
-      .select("*");
-
-    if (chipErr) throw chipErr;
-
-    const mapped = todayRows.map((a) => rowToBoardDog(a, visitByDog[a.dog_id]));
-    setDogs(await attachPhotoUrls(mapped));
-    setPresets(mergePresetsWithDefaults(chipsToPresets(chipRows)));
-  }, []);
+    setDogs((current) =>
+      mergeDogLists(current, withPhotos, editGuardRef.current, { replaceOrder: true })
+    );
+    await loadPresets();
+    touchSynced();
+  }, [loadPresets, touchSynced]);
 
   const loadDueDogs = useCallback(async () => {
-    const { data: { session: s } } = await supabase.auth.getSession();
+    const {
+      data: { session: s },
+    } = await supabase.auth.getSession();
     if (!s) return;
     setBoardError("");
     const today = todayMelbourneDateString();
@@ -105,28 +138,145 @@ export function useBoard(session) {
 
     const dueEntries = computeDueToRebook(appointments, today);
     const dogIds = dueEntries.map((e) => e.dogId);
-    let visitByDog = {};
-
-    if (dogIds.length) {
-      const { data: visits, error: visitErr } = await supabase
-        .from("visits")
-        .select("*")
-        .in("dog_id", dogIds)
-        .order("visit_date", { ascending: false });
-
-      if (visitErr) throw visitErr;
-      for (const v of visits || []) {
-        if (!visitByDog[v.dog_id]) visitByDog[v.dog_id] = v;
-      }
-    }
+    const visitByDog = await fetchLatestVisitsByDog(dogIds);
 
     const mapped = dueEntries.map((e) => dueEntryToBoardDog(e, visitByDog[e.dogId]));
     setDueDogs(await attachPhotoUrls(mapped));
   }, []);
 
-  const refreshBoard = useCallback(() => {
-    const load = boardModeRef.current === "due" ? loadDueDogs : loadBoard;
-    load().catch((e) => setBoardError(e.message || "Could not refresh board data."));
+  const applyAppointmentPatches = useCallback(
+    async (ids) => {
+      if (!ids.length) return;
+      const rows = await fetchAppointmentsByIds(ids);
+      const date = todayMelbourneDateString();
+      const todayRows = rows.filter((a) => String(a.appointment_date).slice(0, 10) === date);
+      if (!todayRows.length) return;
+
+      const dogIds = [...new Set(todayRows.map((a) => a.dog_id).filter(Boolean))];
+      const visitByDog = await fetchLatestVisitsByDog(dogIds);
+      const mapped = dedupeBoardDogs(mapRowsToBoardDogs(todayRows, visitByDog));
+      const withPhotos = await attachPhotoUrls(mapped);
+
+      setDogs((current) => mergeDogLists(current, withPhotos, editGuardRef.current));
+      touchSynced();
+    },
+    [touchSynced]
+  );
+
+  const removeAppointment = useCallback(
+    (id) => {
+      if (!id) return;
+      setDogs((p) => p.filter((d) => d.id !== id));
+      touchSynced();
+    },
+    [touchSynced]
+  );
+
+  const applyDogPatch = useCallback(
+    async (dogId) => {
+      if (!dogId) return;
+      const { data: dog, error } = await supabase.from("dogs").select("*").eq("id", dogId).maybeSingle();
+      if (error || !dog) return;
+
+      const patch = {
+        dog: dog.name || "",
+        owner: dog.owner_name || "",
+        phone: dog.phone || "",
+        weight: dog.weight || "",
+        avatar: dog.avatar || "🐕",
+        bg: dog.bg_color || "#E9D9C6",
+        specs: { cut: "", coat: "", temperament: "", health: "", flag: "", ...(dog.specs || {}) },
+        nameLocked: Boolean(dog.name_locked),
+        squareCustomerId: dog.square_customer_id || null,
+      };
+
+      setDogs((p) => patchDogOnList(p, dogId, patch));
+      setDueDogs((p) => patchDogOnList(p, dogId, patch));
+      touchSynced();
+    },
+    [touchSynced]
+  );
+
+  const applyVisitPatch = useCallback(
+    async (dogId) => {
+      if (!dogId) return;
+      const visitByDog = await fetchLatestVisitsByDog([dogId]);
+      const visit = visitByDog[dogId];
+      if (!visit) return;
+
+      const { full, thumb } = visit.photo_url
+        ? await signPhotoDisplayMap([visit.photo_url])
+        : { full: {}, thumb: {} };
+      const lastVisit = rowToBoardDog(
+        { id: "_", dogs: {}, today_notes: {} },
+        visit,
+        full,
+        thumb
+      ).lastVisit;
+
+      setDogs((p) => patchDogOnList(p, dogId, { lastVisit }));
+      setDueDogs((p) => patchDogOnList(p, dogId, { lastVisit }));
+      touchSynced();
+    },
+    [touchSynced]
+  );
+
+  const softPoll = useCallback(() => {
+    if (!liveSyncRef.current) return;
+    loadBoard().catch(() => {});
+    loadDueDogs().catch(() => {});
+  }, [loadBoard, loadDueDogs]);
+
+  const runSquareSpotCheck = useCallback(async ({ autoSync = true } = {}) => {
+    if (spotCheckRunningRef.current) return null;
+    spotCheckRunningRef.current = true;
+    try {
+      const {
+        data: { session: s },
+      } = await supabase.auth.getSession();
+      if (!s) return null;
+
+      const res = await fetch("/api/square/spot-check", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${s.access_token || ""}`,
+        },
+        body: JSON.stringify({}),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) return null;
+
+      if (json.needsSync) {
+        const n = json.missingInBoard?.length || 0;
+        setBoardNotice(
+          n
+            ? `${n} booking(s) in Square not on the board — syncing now…`
+            : "Square check found updates — syncing now…"
+        );
+        if (autoSync) {
+          const syncRes = await fetch("/api/square/sync", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${s.access_token || ""}`,
+            },
+            body: JSON.stringify({}),
+          });
+          const syncJson = await syncRes.json().catch(() => ({}));
+          if (syncRes.ok && syncJson.ok) {
+            await loadBoard();
+            await loadDueDogs();
+            setBoardNotice(`Square check synced ${syncJson.upserted || 0} appointment(s).`);
+          }
+        }
+      }
+      return json;
+    } catch {
+      return null;
+    } finally {
+      spotCheckRunningRef.current = false;
+    }
   }, [loadBoard, loadDueDogs]);
 
   useEffect(() => {
@@ -136,6 +286,7 @@ export function useBoard(session) {
       setDogs([]);
       setDueDogs([]);
       setBoardLoading(false);
+      setRealtimeStatus("CLOSED");
       loadedForUserRef.current = null;
       return;
     }
@@ -155,34 +306,69 @@ export function useBoard(session) {
         if (mounted) setBoardLoading(false);
       });
 
-    const channel = supabase
-      .channel("board-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointments" }, refreshBoard)
-      .on("postgres_changes", { event: "*", schema: "public", table: "dogs" }, refreshBoard)
-      .on("postgres_changes", { event: "*", schema: "public", table: "visits" }, refreshBoard)
-      .on("postgres_changes", { event: "*", schema: "public", table: "preset_chips" }, () => {
-        loadBoard().catch(() => {});
-      })
-      .subscribe();
+    const stopPhotoRefresh = startPhotoUrlRefreshLoop();
+
+    const unsubscribe = subscribeBoardRealtime({
+      enabled: liveSyncEnabled,
+      onAppointmentIds: (ids) => {
+        applyAppointmentPatches(ids).catch(() => softPoll());
+      },
+      onAppointmentDeleted: removeAppointment,
+      onDogId: (dogId) => {
+        applyDogPatch(dogId).catch(() => softPoll());
+      },
+      onVisitDogId: (dogId) => {
+        applyVisitPatch(dogId).catch(() => softPoll());
+      },
+      onPresets: () => {
+        loadPresets().catch(() => {});
+      },
+      onPoll: softPoll,
+      onStatus: (status) => {
+        if (mounted) setRealtimeStatus(status);
+      },
+    });
 
     return () => {
       mounted = false;
-      supabase.removeChannel(channel);
+      stopPhotoRefresh();
+      unsubscribe();
     };
-  }, [session?.user?.id, loadBoard, loadDueDogs, refreshBoard]);
+  }, [
+    session?.user?.id,
+    liveSyncEnabled,
+    loadBoard,
+    loadDueDogs,
+    loadPresets,
+    applyAppointmentPatches,
+    removeAppointment,
+    applyDogPatch,
+    applyVisitPatch,
+    softPoll,
+  ]);
 
   useEffect(() => {
-    const userId = session?.user?.id;
-    if (!userId) return;
+    if (!session?.user?.id || !liveSyncEnabled) return;
 
-    const onVisible = () => {
-      if (document.visibilityState !== "visible") return;
-      Promise.all([loadBoard(), loadDueDogs()]).catch(() => {});
+    let timeoutId;
+    let cancelled = false;
+
+    const schedule = () => {
+      const delay =
+        SPOT_CHECK_MIN_MS + Math.random() * (SPOT_CHECK_MAX_MS - SPOT_CHECK_MIN_MS);
+      timeoutId = setTimeout(async () => {
+        if (cancelled || !liveSyncRef.current) return;
+        await runSquareSpotCheck({ autoSync: true });
+        if (!cancelled && liveSyncRef.current) schedule();
+      }, delay);
     };
 
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [session?.user?.id, loadBoard, loadDueDogs]);
+    schedule();
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [session?.user?.id, liveSyncEnabled, runSquareSpotCheck]);
 
   const persistPatch = async (id, patch, current) => {
     if (current.readOnly) return;
@@ -199,7 +385,9 @@ export function useBoard(session) {
     }
 
     if (patch.nameLocked && patch.dog?.trim() && current.squareCustomerId) {
-      const { data: { session: s } } = await supabase.auth.getSession();
+      const {
+        data: { session: s },
+      } = await supabase.auth.getSession();
       const res = await fetch("/api/square/pet-name", {
         method: "POST",
         headers: {
@@ -264,6 +452,7 @@ export function useBoard(session) {
         note: current.today?.watch || "",
         photoPath,
         photoUrl,
+        photoThumbUrl: photoPath ? await getGroomPhotoThumbUrl(photoPath, 7200).catch(() => photoUrl) : null,
       };
 
       setDogs((p) =>
@@ -282,7 +471,6 @@ export function useBoard(session) {
     setBoardError("");
     try {
       await persistPatch(id, { collected: true }, merged);
-      await loadBoard();
     } catch (e) {
       setBoardError(e.message || "Could not mark as picked up.");
       await loadBoard();
@@ -298,11 +486,7 @@ export function useBoard(session) {
     const merged = { ...current, ...patch };
     const setter = boardMode === "due" ? setDueDogs : setDogs;
     setter((p) => p.map((d) => (d.id === id ? merged : d)));
-    persistPatch(id, patch, merged)
-      .then(async () => {
-        if (patch.collected === true) await loadBoard();
-      })
-      .catch((e) => {
+    persistPatch(id, patch, merged).catch((e) => {
       setBoardError(e.message || "Could not save changes. Refresh to retry.");
       if (boardMode === "due") loadDueDogs();
       else loadBoard();
@@ -338,8 +522,10 @@ export function useBoard(session) {
         file,
       });
       let url = null;
+      let thumbUrl = null;
       try {
         url = await getGroomPhotoDisplayUrl(path, 7200);
+        thumbUrl = await getGroomPhotoThumbUrl(path, 7200);
       } catch (e) {
         setBoardError(
           (e.message || "Photo saved but could not load preview.") +
@@ -349,6 +535,7 @@ export function useBoard(session) {
       const patch = {
         groomPhotoPath: path,
         groomPhotoUrl: url || previewUrl,
+        groomPhotoThumbUrl: thumbUrl || url || previewUrl,
         groomPhotoPreviewUrl: url ? null : previewUrl,
       };
       const merged = { ...withPreview, ...patch };
@@ -409,10 +596,7 @@ export function useBoard(session) {
 
     if (!row) return;
 
-    const { error } = await supabase
-      .from("preset_chips")
-      .update({ chips: next })
-      .eq("id", row.id);
+    const { error } = await supabase.from("preset_chips").update({ chips: next }).eq("id", row.id);
     if (error) {
       setBoardError("Could not save preset chips.");
       loadBoard();
@@ -424,7 +608,9 @@ export function useBoard(session) {
     setBoardError("");
     setBoardNotice("");
     try {
-      const { data: { session: s } } = await supabase.auth.getSession();
+      const {
+        data: { session: s },
+      } = await supabase.auth.getSession();
       const res = await fetch("/api/square/sync", {
         method: "POST",
         headers: {
@@ -465,7 +651,9 @@ export function useBoard(session) {
           `Synced ${json.upserted} appointment(s) from ${json.bookingsFound} booking(s). ${warnings.join(" ")}`
         );
       } else {
-        setBoardNotice(`Synced ${json.upserted} appointment(s) from ${json.bookingsFound} booking(s).`);
+        setBoardNotice(
+          `Synced ${json.upserted} appointment(s) from ${json.bookingsFound} booking(s).`
+        );
       }
 
       if (boardMode === "due") await loadDueDogs();
@@ -478,6 +666,20 @@ export function useBoard(session) {
     }
   };
 
+  const registerEdit = useCallback((key, active) => {
+    if (active) editGuardRef.current.start(key);
+    else editGuardRef.current.end(key);
+  }, []);
+
+  const liveBadgeOn =
+    liveSyncEnabled && (isRealtimeLive(realtimeStatus) || realtimeStatus === "CONNECTING");
+  const liveBadgeColor = liveBadgeOn ? "green" : "amber";
+  const liveBadgeLabel = liveSyncEnabled
+    ? isRealtimeLive(realtimeStatus)
+      ? "LIVE"
+      : "SYNC"
+    : "PAUSED";
+
   return {
     dogs,
     dueDogs,
@@ -489,6 +691,13 @@ export function useBoard(session) {
     boardNotice,
     syncing,
     photoUploading,
+    liveSyncEnabled,
+    toggleLiveSync,
+    liveBadgeOn,
+    liveBadgeColor,
+    liveBadgeLabel,
+    realtimeStatus,
+    lastSyncedAt,
     update,
     setStatus,
     uploadPhoto,
@@ -496,5 +705,6 @@ export function useBoard(session) {
     removePreset,
     markCollected,
     syncSquare,
+    registerEdit,
   };
 }

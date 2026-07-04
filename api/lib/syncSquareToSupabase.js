@@ -9,6 +9,7 @@ import {
 } from "./square.js";
 import { isGenericPetName, mapSquareBookingToRows } from "./mapBooking.js";
 import { melbourneDayBounds, melbourneDateString, todayMelbourneDateString } from "./melbourne.js";
+import { dedupeDuplicateSlots } from "../../lib/dedupeAppointments.js";
 
 function shiftMelbourneDateString(dateStr, deltaDays) {
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -208,6 +209,22 @@ async function findOrCreateDog(supabase, dogPayload, { squareBookingId }) {
     return existingAppt.dog_id;
   }
 
+  if (dogPayload.square_customer_id && !isGenericPetName(dogPayload.name)) {
+    const { data: byCustomer, error: custErr } = await supabase
+      .from("dogs")
+      .select("id")
+      .eq("square_customer_id", dogPayload.square_customer_id)
+      .eq("name", dogPayload.name)
+      .limit(1);
+    if (custErr && !isMissingColumnError(custErr)) throw custErr;
+    if (byCustomer?.length) {
+      const dogId = byCustomer[0].id;
+      const locked = await readDogNameLocked(supabase, dogId);
+      await updateDogRow(supabase, dogId, dogPayload, { preserveName: locked });
+      return dogId;
+    }
+  }
+
   if (!isGenericPetName(dogPayload.name)) {
     const { data: matches, error } = await supabase
       .from("dogs")
@@ -245,62 +262,6 @@ async function findExistingAppointment(supabase, { squareBookingId, dogId, appoi
     .maybeSingle();
   if (slotErr) throw slotErr;
   return bySlot;
-}
-
-/** Remove duplicate rows for the same dog + date + drop time (keeps Square-backed row). */
-async function dedupeDuplicateSlots(supabase, windowStart, windowEnd, squareBookingIds) {
-  const keep = new Set(squareBookingIds);
-  const { data: appts, error } = await supabase
-    .from("appointments")
-    .select("id, dog_id, appointment_date, drop_time, square_booking_id, status, collected, dogs(name, owner_name)")
-    .gte("appointment_date", windowStart)
-    .lte("appointment_date", windowEnd);
-
-  if (error) throw error;
-
-  const groups = new Map();
-  for (const a of appts || []) {
-    const owner = a.dogs?.owner_name || "";
-    const name = a.dogs?.name || "";
-    const key = a.square_booking_id
-      ? `sq:${a.square_booking_id}`
-      : `${a.appointment_date}|${owner}|${name}|${a.drop_time}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(a);
-  }
-
-  const score = (row) => {
-    if (row.square_booking_id && keep.has(row.square_booking_id)) return 3;
-    if (["checkedin", "grooming", "ready"].includes(row.status) || row.collected) return 2;
-    if (row.square_booking_id) return 1;
-    return 0;
-  };
-
-  let removedAppointments = 0;
-  const removedDogIds = new Set();
-  for (const rows of groups.values()) {
-    if (rows.length <= 1) continue;
-    rows.sort((a, b) => score(b) - score(a));
-    for (const dup of rows.slice(1)) {
-      await supabase.from("appointments").delete().eq("id", dup.id);
-      removedAppointments++;
-      if (dup.dog_id) removedDogIds.add(dup.dog_id);
-    }
-  }
-
-  let removedDogs = 0;
-  for (const dogId of removedDogIds) {
-    const { count } = await supabase
-      .from("appointments")
-      .select("*", { count: "exact", head: true })
-      .eq("dog_id", dogId);
-    if (count === 0) {
-      await supabase.from("dogs").delete().eq("id", dogId);
-      removedDogs++;
-    }
-  }
-
-  return { removedAppointments, removedDogs };
 }
 
 export async function syncSquareToSupabase({

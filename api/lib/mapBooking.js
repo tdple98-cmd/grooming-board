@@ -119,22 +119,6 @@ export function petNameFromBookingNotes(booking) {
   return "";
 }
 
-/**
- * Pick one pet name for a Square booking.
- * When a customer has multiple bookings the same day, names are assigned in time order.
- */
-export function pickPetNameForBooking(booking, { customer, customerCustomAttributes, nameOverride }) {
-  if (nameOverride) return nameOverride;
-
-  const fromNotes = petNameFromBookingNotes(booking);
-  if (fromNotes) return fromNotes;
-
-  const names = parseDogNames({ customer, customerCustomAttributes });
-  if (names.length === 1) return names[0];
-  if (names.length) return names[0];
-  return ownerDogFallback(customer);
-}
-
 /** Assign pet names for all bookings on a day, grouped by customer + start time. */
 export function assignPetNamesForDayBookings(dayBookings, customersById, customerCustomAttrsById) {
   const byCustomer = new Map();

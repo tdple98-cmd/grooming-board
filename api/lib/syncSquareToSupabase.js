@@ -5,11 +5,13 @@ import {
   batchRetrieveCustomers,
   listBookingsInRange,
   listLocations,
+  listTeamMemberIds,
   searchTeamMembers,
 } from "./square.js";
-import { isGenericPetName, mapSquareBookingToRows } from "./mapBooking.js";
+import { isGenericPetName, mapSquareBookingToRows, assignPetNamesForDayBookings } from "./mapBooking.js";
 import { melbourneDayBounds, melbourneDateString, todayMelbourneDateString } from "./melbourne.js";
-import { dedupeDuplicateSlots } from "../../lib/dedupeAppointments.js";
+import { dedupeDuplicateSlots, pickBestAppointmentRow } from "../../lib/dedupeAppointments.js";
+import { isKeptSquareBookingId } from "../../lib/squareBookingId.js";
 
 function shiftMelbourneDateString(dateStr, deltaDays) {
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -70,20 +72,43 @@ export function melbourneRangeChunks(startDateStr, dayCount) {
   return chunks;
 }
 
-async function listAllBookingsInWindow({ environment, accessToken, startDate, days, locationId }) {
+export async function listAllBookingsInWindow({ environment, accessToken, startDate, days, locationId }) {
   const chunks = melbourneRangeChunks(startDate, days);
   const byId = new Map();
 
+  const addBatch = (batch) => {
+    for (const booking of batch) {
+      byId.set(booking.id, booking);
+    }
+  };
+
+  let teamMemberIds = [];
+  try {
+    teamMemberIds = await listTeamMemberIds({ environment, accessToken });
+  } catch {
+    teamMemberIds = [];
+  }
+
   for (const chunk of chunks) {
-    const batch = await listBookingsInRange({
+    const baseArgs = {
       environment,
       accessToken,
       startAtMin: chunk.startAtMin,
       startAtMax: chunk.startAtMax,
-      locationId,
-    });
-    for (const booking of batch) {
-      byId.set(booking.id, booking);
+    };
+
+    addBatch(await listBookingsInRange(baseArgs));
+    if (locationId) {
+      addBatch(await listBookingsInRange({ ...baseArgs, locationId }));
+    }
+    for (const teamMemberId of teamMemberIds) {
+      addBatch(
+        await listBookingsInRange({
+          ...baseArgs,
+          locationId: locationId || undefined,
+          teamMemberId,
+        })
+      );
     }
   }
 
@@ -104,7 +129,7 @@ async function purgeStaleSquareInWindow(supabase, squareBookingIds, windowStart,
   // Only remove Square-linked rows inside the sync window that Square no longer returned.
   // Past days and dates outside the window are never deleted.
   const toRemove = (appts || []).filter(
-    (a) => a.square_booking_id && !keep.has(a.square_booking_id)
+    (a) => a.square_booking_id && !isKeptSquareBookingId(a.square_booking_id, keep)
   );
 
   if (!toRemove.length) return { removedAppointments: 0, removedDogs: 0 };
@@ -244,14 +269,23 @@ async function findOrCreateDog(supabase, dogPayload, { squareBookingId }) {
   return insertDogRow(supabase, dogPayload);
 }
 
-async function findExistingAppointment(supabase, { squareBookingId, dogId, appointmentDate, dropTime }) {
-  const { data: bySquare, error: sqErr } = await supabase
-    .from("appointments")
-    .select("id, dog_id, status, collected, square_booking_id")
-    .eq("square_booking_id", squareBookingId)
-    .maybeSingle();
-  if (sqErr) throw sqErr;
-  if (bySquare) return bySquare;
+async function findExistingAppointment(
+  supabase,
+  { squareBookingId, dogId, appointmentDate, dropTime },
+  keepSquareIds = new Set()
+) {
+  if (squareBookingId) {
+    const { data: exactRows, error: sqErr } = await supabase
+      .from("appointments")
+      .select(
+        "id, dog_id, status, collected, square_booking_id, groom_photo_url, checked_in_at, groomer, deposit_paid, late, today_notes"
+      )
+      .eq("square_booking_id", squareBookingId);
+    if (sqErr) throw sqErr;
+    const best = pickBestAppointmentRow(exactRows, keepSquareIds);
+    if (best) return best;
+    return null;
+  }
 
   const { data: bySlot, error: slotErr } = await supabase
     .from("appointments")
@@ -350,45 +384,58 @@ export async function syncSquareToSupabase({
   let upserted = 0;
   let skipped = 0;
   const errors = [];
-  const squareBookingIds = [...new Set(
-    bookings.flatMap((booking) => {
-      const customer = customersById[booking.customer_id];
-      const customerCustomAttributes = customerCustomAttrsById[booking.customer_id] || [];
-      const rows = mapSquareBookingToRows(booking, {
-        customer,
-        catalogById,
-        teamById,
-        customerCustomAttributes,
-      });
-      return [booking.id, ...rows.map((r) => r.appointment.square_booking_id).filter(Boolean)];
-    })
-  )];
+  const squareBookingIds = [];
 
   for (const d of activeDates) {
     const dayBookings = bookingsByDate[d] || [];
+    const siblingCountByCustomer = new Map();
+    for (const booking of dayBookings) {
+      const cid = booking.customer_id || booking.id;
+      siblingCountByCustomer.set(cid, (siblingCountByCustomer.get(cid) || 0) + 1);
+    }
+
+    const petNamesByBookingId = assignPetNamesForDayBookings(
+      dayBookings,
+      customersById,
+      customerCustomAttrsById
+    );
     let dayBand = 0;
+    const keepIds = new Set();
+
     for (const booking of dayBookings) {
       try {
         const customer = customersById[booking.customer_id];
         const customerCustomAttributes = customerCustomAttrsById[booking.customer_id] || [];
+        const siblingBookingCount = siblingCountByCustomer.get(booking.customer_id || booking.id) || 1;
         const mappedRows = mapSquareBookingToRows(booking, {
           customer,
           catalogById,
           teamById,
           customerCustomAttributes,
+          petNameOverride: petNamesByBookingId.get(booking.id),
+          siblingBookingCount,
         });
+
+        for (const mapped of mappedRows) {
+          keepIds.add(mapped.appointment.square_booking_id);
+        }
 
         for (const mapped of mappedRows) {
           dayBand++;
           const squareBookingId = mapped.appointment.square_booking_id;
+          squareBookingIds.push(squareBookingId);
           const dogId = await findOrCreateDog(supabase, mapped.dog, { squareBookingId });
 
-          const existingAppt = await findExistingAppointment(supabase, {
-            squareBookingId,
-            dogId,
-            appointmentDate: mapped.appointment.appointment_date,
-            dropTime: mapped.appointment.drop_time,
-          });
+          const existingAppt = await findExistingAppointment(
+            supabase,
+            {
+              squareBookingId,
+              dogId,
+              appointmentDate: mapped.appointment.appointment_date,
+              dropTime: mapped.appointment.drop_time,
+            },
+            keepIds
+          );
 
           const apptPayload = {
             ...mapped.appointment,

@@ -39,7 +39,14 @@ export async function squareRequest(path, { environment, accessToken, method = "
 }
 
 /** List all bookings in range (paginated). */
-export async function listBookingsInRange({ environment, accessToken, startAtMin, startAtMax, locationId }) {
+export async function listBookingsInRange({
+  environment,
+  accessToken,
+  startAtMin,
+  startAtMax,
+  locationId,
+  teamMemberId,
+}) {
   const bookings = [];
   let cursor;
 
@@ -47,6 +54,7 @@ export async function listBookingsInRange({ environment, accessToken, startAtMin
     const params = new URLSearchParams();
     if (cursor) params.set("cursor", cursor);
     if (locationId) params.set("location_id", locationId);
+    if (teamMemberId) params.set("team_member_id", teamMemberId);
     if (startAtMin) params.set("start_at_min", startAtMin);
     if (startAtMax) params.set("start_at_max", startAtMax);
     params.set("limit", "100");
@@ -94,6 +102,28 @@ export async function batchRetrieveCatalog({ environment, accessToken, objectIds
     for (const obj of data.objects || []) map[obj.id] = obj;
   }
   return map;
+}
+
+export async function listTeamMemberIds({ environment, accessToken }) {
+  const ids = [];
+  let cursor;
+  do {
+    const data = await squareRequest("/v2/team-members/search", {
+      environment,
+      accessToken,
+      method: "POST",
+      body: {
+        query: { filter: { status: "ACTIVE" } },
+        limit: 200,
+        ...(cursor ? { cursor } : {}),
+      },
+    });
+    for (const tm of data.team_members || []) {
+      if (tm.id) ids.push(tm.id);
+    }
+    cursor = data.cursor;
+  } while (cursor);
+  return ids;
 }
 
 export async function searchTeamMembers({ environment, accessToken, teamMemberIds = [] }) {

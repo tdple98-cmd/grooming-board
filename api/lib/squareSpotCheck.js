@@ -1,6 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
-import { listBookingsInRange, listLocations } from "./square.js";
-import { melbourneDayBounds, todayMelbourneDateString } from "./melbourne.js";
+import { listLocations } from "./square.js";
+import { listAllBookingsInWindow } from "./syncSquareToSupabase.js";
+import { todayMelbourneDateString } from "./melbourne.js";
+import { baseSquareBookingId } from "../../lib/squareBookingId.js";
 
 const ACTIVE = new Set(["ACCEPTED", "PENDING"]);
 
@@ -26,15 +28,14 @@ export async function spotCheckTodayBoard({
 
   const locations = await listLocations({ environment, accessToken });
   const locationId = locations[0]?.id;
-  const { startAtMin, startAtMax } = melbourneDayBounds(targetDate);
 
   let bookings = [];
   try {
-    bookings = await listBookingsInRange({
+    bookings = await listAllBookingsInWindow({
       environment,
       accessToken,
-      startAtMin,
-      startAtMax,
+      startDate: targetDate,
+      days: 1,
       locationId,
     });
   } catch (err) {
@@ -60,7 +61,7 @@ export async function spotCheckTodayBoard({
     .filter((a) => {
       const sid = a.square_booking_id;
       if (!sid) return false;
-      const base = sid.includes("#") ? sid.split("#")[0] : sid;
+      const base = baseSquareBookingId(sid);
       return !squareIdSet.has(base);
     })
     .map((a) => ({

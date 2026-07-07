@@ -1,4 +1,5 @@
 import { melbourneDateString, melbourneTimeString } from "./melbourne.js";
+import { squareBookingKey } from "../../lib/squareBookingId.js";
 
 const BG_COLORS = ["#E9D9C6", "#DBCBB6", "#CDBB9E", "#E4D5C0", "#DCCDB8", "#D6C4AE"];
 
@@ -106,6 +107,63 @@ function ownerDogFallback(customer) {
   return given ? `${given}'s dog` : "Dog";
 }
 
+/** Pet name typed on the booking itself (most reliable for multi-dog households). */
+export function petNameFromBookingNotes(booking) {
+  for (const raw of [booking?.customer_note, booking?.seller_note]) {
+    const s = String(raw || "").trim();
+    if (!s) continue;
+    const line = s.split(/\r?\n/)[0].trim();
+    const cleaned = cleanPetName(line);
+    if (cleaned && !isGenericPetName(cleaned)) return cleaned;
+  }
+  return "";
+}
+
+/**
+ * Pick one pet name for a Square booking.
+ * When a customer has multiple bookings the same day, names are assigned in time order.
+ */
+export function pickPetNameForBooking(booking, { customer, customerCustomAttributes, nameOverride }) {
+  if (nameOverride) return nameOverride;
+
+  const fromNotes = petNameFromBookingNotes(booking);
+  if (fromNotes) return fromNotes;
+
+  const names = parseDogNames({ customer, customerCustomAttributes });
+  if (names.length === 1) return names[0];
+  if (names.length) return names[0];
+  return ownerDogFallback(customer);
+}
+
+/** Assign pet names for all bookings on a day, grouped by customer + start time. */
+export function assignPetNamesForDayBookings(dayBookings, customersById, customerCustomAttrsById) {
+  const byCustomer = new Map();
+  for (const booking of dayBookings) {
+    const cid = booking.customer_id || booking.id;
+    if (!byCustomer.has(cid)) byCustomer.set(cid, []);
+    byCustomer.get(cid).push(booking);
+  }
+
+  const nameByBookingId = new Map();
+  for (const [cid, bookings] of byCustomer) {
+    const sorted = [...bookings].sort((a, b) => new Date(a.start_at) - new Date(b.start_at));
+    const customer = customersById[cid];
+    const attrs = customerCustomAttrsById[cid] || [];
+    const profileNames = parseDogNames({ customer, customerCustomAttributes: attrs });
+
+    for (let i = 0; i < sorted.length; i++) {
+      const booking = sorted[i];
+      let name = petNameFromBookingNotes(booking);
+      if (!name && profileNames.length === sorted.length) name = profileNames[i];
+      else if (!name && profileNames.length === 1) name = profileNames[0];
+      else if (!name && profileNames.length) name = profileNames[Math.min(i, profileNames.length - 1)];
+      else if (!name) name = ownerDogFallback(customer);
+      nameByBookingId.set(booking.id, name);
+    }
+  }
+  return nameByBookingId;
+}
+
 /**
  * Resolve pet name(s) from Square customer custom attributes (priority order from client).
  * 1. dog_name
@@ -149,13 +207,33 @@ export function customerDisplayName(customer) {
   return parts.join(" ") || customer.email_address || "Unknown owner";
 }
 
-function squareBookingKey(bookingId, petIndex, total) {
-  if (total <= 1) return bookingId;
-  return petIndex === 0 ? bookingId : `${bookingId}#${petIndex + 1}`;
+/** Resolve pet name list for one Square booking (may become multiple cards). */
+export function resolvePetNamesForBooking(
+  booking,
+  { customer, customerCustomAttributes, petNameOverride, siblingBookingCount = 1 }
+) {
+  if (petNameOverride) return [petNameOverride];
+
+  const fromNotes = petNameFromBookingNotes(booking);
+  if (fromNotes) return [fromNotes];
+
+  const profileNames = parseDogNames({ customer, customerCustomAttributes });
+
+  // Several Square bookings same owner today → one dog per booking, never split profile list.
+  if (siblingBookingCount > 1) {
+    if (profileNames.length) return [profileNames[0]];
+    return [ownerDogFallback(customer)];
+  }
+
+  if (profileNames.length) return profileNames;
+  return [ownerDogFallback(customer)];
 }
 
-/** Map one Square booking to one or more board rows (one per pet when name lists multiple). */
-export function mapSquareBookingToRows(booking, { customer, catalogById, teamById, customerCustomAttributes }) {
+/** Map one Square booking to one or more board rows (multi-pet on a single booking). */
+export function mapSquareBookingToRows(
+  booking,
+  { customer, catalogById, teamById, customerCustomAttributes, petNameOverride, siblingBookingCount = 1 }
+) {
   const segments = booking.appointment_segments || [];
   const primary = segments[0] || {};
   const durationMin = segments.reduce((sum, s) => sum + (s.duration_minutes || 0), 0) || 60;
@@ -174,7 +252,12 @@ export function mapSquareBookingToRows(booking, { customer, catalogById, teamByI
   const endMs = new Date(startIso).getTime() + durationMin * 60 * 1000;
   const endIso = new Date(endMs).toISOString();
 
-  const petNames = parseDogNames({ customer, customerCustomAttributes });
+  const petNames = resolvePetNamesForBooking(booking, {
+    customer,
+    customerCustomAttributes,
+    petNameOverride,
+    siblingBookingCount,
+  });
   const { weight, specs } = mapDogFieldsFromCustomerAttrs(customerCustomAttributes);
   const ownerName = customerDisplayName(customer);
   const phone = customer?.phone_number || "";

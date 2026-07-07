@@ -13,6 +13,7 @@ import {
 import { computeDueToRebook, dueEntryToBoardDog } from "../lib/dueToRebook.js";
 import {
   dedupeBoardDogs,
+  annotateLinkedBookings,
   fetchAppointmentsByIds,
   fetchLatestVisitsByDog,
   fetchTodayAppointments,
@@ -112,7 +113,7 @@ export function useBoard(session) {
     const dogIds = [...new Set(todayRows.map((a) => a.dog_id).filter(Boolean))];
     const visitByDog = await fetchLatestVisitsByDog(dogIds);
 
-    const mapped = dedupeBoardDogs(mapRowsToBoardDogs(todayRows, visitByDog));
+    const mapped = annotateLinkedBookings(dedupeBoardDogs(mapRowsToBoardDogs(todayRows, visitByDog)));
     const withPhotos = await attachPhotoUrls(mapped);
 
     setDogs((current) =>
@@ -154,7 +155,7 @@ export function useBoard(session) {
 
       const dogIds = [...new Set(todayRows.map((a) => a.dog_id).filter(Boolean))];
       const visitByDog = await fetchLatestVisitsByDog(dogIds);
-      const mapped = dedupeBoardDogs(mapRowsToBoardDogs(todayRows, visitByDog));
+      const mapped = annotateLinkedBookings(dedupeBoardDogs(mapRowsToBoardDogs(todayRows, visitByDog)));
       const withPhotos = await attachPhotoUrls(mapped);
 
       setDogs((current) => mergeDogLists(current, withPhotos, editGuardRef.current));

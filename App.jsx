@@ -472,7 +472,14 @@ export default function App() {
                   </div>
 
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontFamily: "Fraunces, serif", fontSize: 20, fontWeight: 600 }}>{d.dog}{d.weight && <span style={{ fontSize: 13, color: C.slate, fontWeight: 400 }}> · {d.weight}</span>}</div>
+                    <div style={{ fontFamily: "Fraunces, serif", fontSize: 20, fontWeight: 600, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                      <span>{d.dog}{d.weight && <span style={{ fontSize: 13, color: C.slate, fontWeight: 400 }}> · {d.weight}</span>}</span>
+                      {d.linkedBookingLetter && (
+                        <span title={`Same Square booking — dog ${d.linkedBookingLetter} of ${d.linkedBookingCount}`} style={{ fontSize: 11, color: C.goldDeep, fontWeight: 700, background: C.gold + "22", border: "1px solid " + C.gold + "55", borderRadius: 999, padding: "2px 8px", fontFamily: "Poppins, sans-serif" }}>
+                          ·{d.linkedBookingLetter}
+                        </span>
+                      )}
+                    </div>
                     <div style={{ fontSize: 15, color: C.ink, fontWeight: 600, marginTop: 3 }}>{d.owner}</div>
                     {d.litterMates && <div style={{ fontSize: 11, color: C.blue, fontWeight: 600, marginTop: 2, display: "inline-flex", alignItems: "center", gap: 4, background: C.blue + "14", padding: "2px 8px", borderRadius: 999 }}>🔗 With {d.litterMates} (same owner)</div>}
                     {d.dueRebook ? (

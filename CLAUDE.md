@@ -30,3 +30,11 @@ React 18 + Vite, Supabase (Auth + Realtime), Vercel edge functions (API).
 - Don't hardcode colors or groomer names — use App.jsx constants
 - Don't add state outside AuthContext/useBoard — sync with Supabase first
 - Don't edit `public/` — static assets
+
+## Cost optimization
+- **Lean constants**: Colors, groomer list, step labels all in lib/constants.js
+- **Split App.jsx**: Primitives in components/Primitives.jsx; helpers in lib/
+  - When you read a file, Claude only loads imported dependencies
+  - Example: fixing a button only reads Button component, not the full App
+- **Profile context**: Run `/context` to see what gets loaded when you edit a file
+- **Settings blocks**: .claude/settings.json blocks Square sync files, node_modules, etc.

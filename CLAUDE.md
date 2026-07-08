@@ -1,32 +1,32 @@
-# Project: <NAME>
+# The Poodle Specialist — Grooming Board
 
-<!--
-  KEEP THIS FILE UNDER ~200 LINES. It loads into context on EVERY session,
-  so every line here is paid for on every message. Only put things Claude
-  can't infer from the code itself. Move workflow-specific playbooks
-  (PR review steps, migration runbooks, deploy steps) into Skills instead —
-  Skills load on-demand only when invoked.
--->
-
-## What this is
-<One or two sentences: what the product does and who it's for.>
+Real-time kanban board for managing dog grooming appointments. Groomers track dogs through check-in → grooming → ready; owners see their dog's status and pick-up time.
 
 ## Stack
-<Languages, frameworks, key services. e.g. "TypeScript + Next.js, Postgres, Stripe.">
+React 18 + Vite, Supabase (Auth + Realtime), Vercel edge functions (API).
 
-## How to run
-- Install: `<command>`
-- Dev server: `<command>`
-- Tests: `<command>`
+## Run
+- Dev: `npm run dev` (Vite on 5173)
+- API: `npm run dev:api` (Vercel functions on 5173)
+- Build: `npm run build`
 
-## Conventions that aren't obvious from the code
-- <e.g. "All API responses go through `lib/respond.ts` — never return raw JSON.">
-- <e.g. "Money is stored in cents as integers, never floats.">
+## Key files
+- **App.jsx** — kanban board UI, step/tag/groom definitions, photo galleries
+- **api/\*** — edge functions (Supabase auth, dog records, grooming specs)
+- **components/\*** — auth, forms, UI widgets
+- **hooks/useBoard.js** — realtime sync from Supabase
+- **contexts/AuthContext.jsx** — session state
+
+## Color palette
+`C` object in App.jsx. Never hardcode colors — reference `C.cream`, `C.gold`, etc.
+
+## Data model
+- **Dogs**: booked → checkedin → grooming → ready (or noshow)
+- **Groom specs**: cut, coat, temperament, health (saved per dog)
+- **Tags**: cut (gold), watch (rose), svc (green) — notes during grooming
+- **Groomers**: Thanh, Wendy, Trang, Michelle, Lynn, Sandy, Fei, Claire
 
 ## Don't
-- <e.g. "Don't edit anything in `/generated` — it's built from the schema.">
-- <e.g. "Don't add new dependencies without asking.">
-
-## Compact instructions
-When compacting, prioritize: current task state, unresolved bugs, and any
-decisions we've made. Drop resolved tool output and passing-test logs.
+- Don't hardcode colors or groomer names — use App.jsx constants
+- Don't add state outside AuthContext/useBoard — sync with Supabase first
+- Don't edit `public/` — static assets

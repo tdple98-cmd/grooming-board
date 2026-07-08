@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./api/lib/syncSquareToSupabase.js)",
+      "Read(./api/lib/mapBooking.js)",
+      "Read(./api/lib/square.js)",
+      "Read(./api/square/**)",
+      "Read(./package-lock.json)"
+    ]
+  }
+}

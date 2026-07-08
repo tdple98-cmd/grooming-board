@@ -6,69 +6,10 @@ import SetPassword from "./components/SetPassword.jsx";
 import { AppLoadingScreen } from "./components/BrandLogo.jsx";
 import { EditField, PresetEditor } from "./components/EditField.jsx";
 import { LazyImage } from "./components/LazyImage.jsx";
-
-// The Poodle Specialist — Grooming Board
-
-const C = {
-  cream: "#F4EFE7", paper: "#FCFAF6", brown: "#2A2420", ink: "#3D362F",
-  gold: "#B8956A", goldDeep: "#9C7B52", line: "#E7DECF",
-  green: "#5E7C5A", amber: "#C68A3E", slate: "#9A9087", rose: "#C98B7A", blue: "#6E8299",
-};
-
-// The four steps a dog moves through, in order. Plain words.
-const STEPS = [
-  { key: "booked", label: "Not arrived", color: C.slate, dot: "#B4ACA2" },
-  { key: "checkedin", label: "Checked in", color: C.blue, dot: C.blue },
-  { key: "grooming", label: "Grooming", color: C.amber, dot: C.amber },
-  { key: "ready", label: "Ready", color: C.green, dot: C.green },
-  { key: "noshow", label: "No-show", color: C.rose, dot: C.rose },
-];
-const stepOf = (k) => STEPS.find((s) => s.key === k) || STEPS[0];
-
-const GROOMERS = ["Thanh", "Wendy", "Trang", "Michelle", "Lynn", "Sandy", "Fei", "Claire"];
-
-const TABS = [{ k: "today", l: "Today" }, { k: "specs", l: "Groom Specs" }, { k: "checkin", l: "Check-in" }, { k: "pickup", l: "Pickup" }];
-
-const TAGS = [
-  { key: "cut", label: "Cut", hint: "Today's change to the cut", color: C.gold },
-  { key: "watch", label: "Watch", hint: "Anything to be careful of", color: C.rose },
-  { key: "svc", label: "Service", hint: "Add-on or change", color: C.green },
-];
-
-const SPECS = [
-  { key: "cut", label: "Usual cut / style" },
-  { key: "coat", label: "Coat type" },
-  { key: "temperament", label: "Temperament" },
-  { key: "health", label: "Health / allergy" },
-];
-
-const FLAG_FIELD = { key: "flag", label: "Flag for next time", hint: "Tap chips or type — saved for next visit", color: C.amber };
-
-function groomPhotoSrc(d, { preferThumb = false } = {}) {
-  if (preferThumb) {
-    return d?.groomPhotoThumbUrl || d?.groomPhotoUrl || d?.groomPhotoPreviewUrl || null;
-  }
-  return d?.groomPhotoUrl || d?.groomPhotoPreviewUrl || null;
-}
-
-function isPlaceholderDogName(name, owner) {
-  if (!name?.trim()) return true;
-  const lower = name.toLowerCase().trim();
-  if (["pet", "pets", "dog", "dogs", "puppy", "puppies", "animal", "animals"].includes(lower)) return true;
-  if (/'s pet$/i.test(name) || /'s dog$/i.test(name)) return true;
-  if (/^\d+\s*dogs?$/i.test(name)) return true;
-  const given = (owner || "").trim().split(/\s+/)[0]?.toLowerCase();
-  if (given && (lower === `${given}'s dog` || lower === `${given}'s dogs` || lower === `${given} dogs`)) return true;
-  return false;
-}
-
-function ownerFirstName(owner) {
-  return (owner || "").trim().split(/\s+/)[0] || "there";
-}
-
-function smsDogName(d) {
-  return isPlaceholderDogName(d.dog, d.owner) ? "your Pups" : d.dog;
-}
+import { Pill, SectionLabel, Hint, Quote, ChipRow, Sheet } from "./components/Primitives.jsx";
+import { C, STEPS, stepOf, GROOMERS, TABS, TAGS, SPECS, FLAG_FIELD } from "./lib/constants.js";
+import { groomPhotoSrc, isPlaceholderDogName, ownerFirstName, smsDogName, lastVisitPhotoSrc, telHref, smsHref, photoText, elapsed } from "./lib/dogHelpers.js";
+import { bigBtn, makeTwoBtn, menuRowStyle } from "./lib/styleHelpers.js";
 
 function DogPhotoTile({ d, size, onTap, uploading, lazy = true, preferThumb = true }) {
   const src = groomPhotoSrc(d, { preferThumb });
@@ -113,29 +54,6 @@ function DogPhotoTile({ d, size, onTap, uploading, lazy = true, preferThumb = tr
   );
 }
 
-function lastVisitPhotoSrc(v, d, { preferThumb = false } = {}) {
-  if (preferThumb) {
-    return v?.photoThumbUrl || v?.photoUrl || (d?.collected ? groomPhotoSrc(d, { preferThumb: true }) : null) || null;
-  }
-  return v?.photoUrl || (d?.collected ? groomPhotoSrc(d) : null) || null;
-}
-
-const telHref = (p) => "tel:" + (p || "").replace(/\s+/g, "");
-const smsHref = (p, body) => "sms:" + (p || "").replace(/\s+/g, "") + "?&body=" + encodeURIComponent(body);
-const thirtyText = (d) =>
-  "Hi " + ownerFirstName(d.owner) + " - " + smsDogName(d) + " will be ready in about 30 mins. Feel free to come now and collect your pup! - The Poodle Specialist";
-const pickupText = (d) =>
-  "Hi " + ownerFirstName(d.owner) + " - " + smsDogName(d) + " is all done and ready for pickup. Come collect your pup whenever suits! - The Poodle Specialist";
-const photoText = (d, url) =>
-  smsDogName(d) + " is all done and looking gorgeous! See the photo here: " + (url || "[link]") + " - The Poodle Specialist";
-
-function elapsed(since) {
-  if (!since) return null;
-  const m = Math.max(0, Math.floor((Date.now() - since) / 60000));
-  const h = Math.floor(m / 60);
-  return h > 0 ? h + "h " + (m % 60) + "m" : m + "m";
-}
-
 export default function App() {
   const { session, profile, loading, needsPassword, signOut } = useAuth();
   const {
@@ -165,6 +83,7 @@ export default function App() {
   } = useBoard(session);
   const photoInputRef = useRef(null);
   const galleryInputRef = useRef(null);
+  const twoBtn = makeTwoBtn(C);
   const [photoTargetId, setPhotoTargetId] = useState(null);
   const [openId, setOpenId] = useState(null);
   const [filter, setFilter] = useState("all");
@@ -568,13 +487,13 @@ export default function App() {
                             {STEPS.filter((s) => s.key !== "noshow").map((s) => {
                               const on = d.status === s.key;
                               return (
-                                <button key={s.key} onClick={() => { setStatus(d.id, s.key); setMenuId(null); }} style={{ ...menuRow, width: "100%", background: on ? s.color + "14" : "none", border: "none", borderBottom: "1px solid " + C.line, textAlign: "left", display: "flex", alignItems: "center", gap: 10, color: C.ink }}>
+                                <button key={s.key} onClick={() => { setStatus(d.id, s.key); setMenuId(null); }} style={{ ...menuRowStyle(C), width: "100%", background: on ? s.color + "14" : "none", border: "none", borderBottom: "1px solid " + C.line, textAlign: "left", display: "flex", alignItems: "center", gap: 10, color: C.ink }}>
                                   <span style={{ width: 9, height: 9, borderRadius: 999, background: s.dot }} />
                                   {s.label}{on ? "  ✓" : ""}
                                 </button>
                               );
                             })}
-                            <button onClick={() => { setStatus(d.id, "noshow"); setMenuId(null); }} style={{ ...menuRow, width: "100%", background: "none", border: "none", textAlign: "left", display: "flex", alignItems: "center", gap: 10, color: C.rose, fontWeight: 700 }}>
+                            <button onClick={() => { setStatus(d.id, "noshow"); setMenuId(null); }} style={{ ...menuRowStyle(C), width: "100%", background: "none", border: "none", textAlign: "left", display: "flex", alignItems: "center", gap: 10, color: C.rose, fontWeight: 700 }}>
                               <span style={{ width: 9, height: 9, borderRadius: 999, background: C.rose }} />
                               No-show
                             </button>
@@ -596,8 +515,8 @@ export default function App() {
                           <>
                             <div onClick={() => setMenuId(null)} style={{ position: "fixed", inset: 0, zIndex: 29 }} />
                             <div style={{ position: "absolute", left: 0, right: 0, bottom: "calc(100% + 8px)", zIndex: 30, background: C.paper, border: "1px solid " + C.line, borderRadius: 14, boxShadow: "0 10px 30px rgba(42,36,32,0.2)", overflow: "hidden" }}>
-                              <button onClick={() => { setMenuId(null); openSheet(d.id); setTab("pickup"); }} style={{ ...menuRow, width: "100%", background: "none", border: "none", textAlign: "left" }}>📷 Send finished photo</button>
-                              <button onClick={() => { update(d.id, { collected: true }); setMenuId(null); }} style={{ ...menuRow, width: "100%", background: "none", border: "none", borderTop: "1px solid " + C.line, color: C.green, textAlign: "left", fontWeight: 700 }}>✓ Picked up — done</button>
+                              <button onClick={() => { setMenuId(null); openSheet(d.id); setTab("pickup"); }} style={{ ...menuRowStyle(C), width: "100%", background: "none", border: "none", textAlign: "left" }}>📷 Send finished photo</button>
+                              <button onClick={() => { update(d.id, { collected: true }); setMenuId(null); }} style={{ ...menuRowStyle(C), width: "100%", background: "none", border: "none", borderTop: "1px solid " + C.line, color: C.green, textAlign: "left", fontWeight: 700 }}>✓ Picked up — done</button>
                             </div>
                           </>
                         )}
@@ -895,75 +814,3 @@ export default function App() {
       )}
     </div>
   );
-}
-
-// ===== small reusable pieces =====
-const bigBtn = (color) => ({ flex: 1, background: color, color: "#fff", border: "none", borderRadius: 13, padding: "14px", fontSize: 14.5, fontWeight: 700 });
-const twoBtn = (active, color) => ({ flex: 1, background: active ? color : C.paper, color: active ? "#fff" : C.ink, border: "1px solid " + (active ? color : C.line), borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 700 });
-const menuRow = { display: "block", padding: "14px 16px", fontSize: 14, fontWeight: 600, color: C.ink, textDecoration: "none", borderBottom: "1px solid " + C.line, fontFamily: "Poppins, sans-serif" };
-
-function Pill({ text, warn }) {
-  const col = warn ? C.amber : C.green;
-  return <span style={{ background: col + "14", color: col, border: "1px solid " + col + "33", borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 600 }}>{text}</span>;
-}
-function SectionLabel({ children, style }) {
-  return <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 700, color: C.goldDeep, marginBottom: 8, ...style }}>{children}</div>;
-}
-function Hint({ children }) {
-  return <p style={{ fontSize: 13, color: C.slate, margin: "0 0 14px", lineHeight: 1.45 }}>{children}</p>;
-}
-function Quote({ children }) {
-  return <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.45, fontStyle: "italic" }}>“{children}”</div>;
-}
-function ChipRow({ items, selected, onPick }) {
-  return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
-      {items.map((it) => {
-        const active = selected === it;
-        return <button key={it} onClick={() => onPick(it)} style={{ background: active ? C.gold : C.paper, color: active ? "#fff" : C.ink, border: "1px solid " + (active ? C.gold : C.line), borderRadius: 999, padding: "9px 15px", fontSize: 13.5, fontWeight: active ? 700 : 500 }}>{active ? "✓ " : ""}{it}</button>;
-      })}
-    </div>
-  );
-}
-
-function Sheet({ children, onClose }) {
-  const [dragY, setDragY] = React.useState(0);
-  const startY = React.useRef(null);
-
-  const onStart = (y) => { startY.current = y; };
-  const onMove = (y) => {
-    if (startY.current == null) return;
-    const dy = y - startY.current;
-    if (dy > 0) setDragY(dy); // only allow downward drag
-  };
-  const onEnd = () => {
-    if (dragY > 110) onClose();   // dragged far enough → dismiss
-    else setDragY(0);             // snap back
-    startY.current = null;
-  };
-
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(42,36,32,0.5)", zIndex: 40, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ background: C.cream, width: "100%", maxWidth: 460, borderRadius: "24px 24px 0 0", maxHeight: "94vh", overflowY: "auto", padding: "8px 20px 28px", transform: `translateY(${dragY}px)`, transition: startY.current == null ? "transform .25s cubic-bezier(.2,.8,.2,1)" : "none" }}
-      >
-        {/* Drag-to-dismiss handle area */}
-        <div
-          onTouchStart={(e) => onStart(e.touches[0].clientY)}
-          onTouchMove={(e) => onMove(e.touches[0].clientY)}
-          onTouchEnd={onEnd}
-          onMouseDown={(e) => onStart(e.clientY)}
-          onMouseMove={(e) => startY.current != null && onMove(e.clientY)}
-          onMouseUp={onEnd}
-          onMouseLeave={() => startY.current != null && onEnd()}
-          style={{ display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", padding: "8px 0 12px", cursor: "grab", touchAction: "none" }}
-        >
-          <div style={{ width: 44, height: 5, background: C.line, borderRadius: 4 }} />
-          <div style={{ fontSize: 11, color: C.slate, marginTop: 6 }}>Swipe down to close</div>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}

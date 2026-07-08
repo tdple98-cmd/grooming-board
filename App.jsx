@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { useAuth } from "./contexts/AuthContext.jsx";
 import { useBoard } from "./hooks/useBoard.js";
-import Login from "./components/Login.jsx";
-import SetPassword from "./components/SetPassword.jsx";
+const Login = lazy(() => import("./components/Login.jsx"));
+const SetPassword = lazy(() => import("./components/SetPassword.jsx"));
 import { AppLoadingScreen } from "./components/BrandLogo.jsx";
 import { EditField } from "./components/EditField.jsx";
 import { PresetEditor } from "./components/PresetEditor.jsx";
@@ -206,8 +206,8 @@ export default function App() {
     );
   }
 
-  if (needsPassword) return <SetPassword />;
-  if (!session) return <Login />;
+  if (needsPassword) return <Suspense fallback={<AppLoadingScreen message="Preparing your account…" />}><SetPassword /></Suspense>;
+  if (!session) return <Suspense fallback={<AppLoadingScreen message="Loading…" />}><Login /></Suspense>;
 
   return (
     <div style={{ minHeight: "100vh", background: C.cream, color: C.ink, fontFamily: "Poppins, sans-serif", maxWidth: 460, margin: "0 auto", position: "relative" }}>

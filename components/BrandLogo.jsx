@@ -1,4 +1,4 @@
-export const LOGO_SRC = "/grooming-board-logo.png";
+export const LOGO_SRC = "/tps-board-icon-v2.png";
 
 export function BrandLogo({ maxWidth = 280, style = {} }) {
   return (

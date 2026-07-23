@@ -238,14 +238,17 @@ export function mapSquareBookingToRows(
 
   // Every segment the customer booked, named by the parent ITEM ("Full Groom")
   // with the variation as fallback, joined as "Full Groom + Teeth Cleaning".
-  // Catalog names carry marketing tags like "(Most Booked)" — keep the name only.
+  // Catalog names carry marketing taglines — "FULL GROOM — MOST BOOKED",
+  // "3-STEPS TEETH CLEANING — POPULAR ADD-ON" — keep only the name, and
+  // tame the all-caps into title case for the cards.
   const cleanServiceName = (raw) => {
-    const cleaned = String(raw || "")
-      .replace(/\s*\([^)]*\)/g, "")
-      .replace(/\s{2,}/g, " ")
-      .replace(/\s*[-–·|]\s*$/, "")
-      .trim();
-    return cleaned || String(raw || "").trim();
+    let s = String(raw || "");
+    s = s.split(/\s*[—–]\s*/)[0];
+    s = s.replace(/\s*\([^)]*\)/g, "").replace(/\s{2,}/g, " ").trim();
+    if (!s) s = String(raw || "").trim();
+    return s
+      .toLowerCase()
+      .replace(/(^|[\s/&+-])([a-z0-9])/g, (m, pre, ch) => pre + ch.toUpperCase());
   };
   const segmentNames = [];
   for (const seg of segments) {

@@ -238,6 +238,15 @@ export function mapSquareBookingToRows(
 
   // Every segment the customer booked, named by the parent ITEM ("Full Groom")
   // with the variation as fallback, joined as "Full Groom + Teeth Cleaning".
+  // Catalog names carry marketing tags like "(Most Booked)" — keep the name only.
+  const cleanServiceName = (raw) => {
+    const cleaned = String(raw || "")
+      .replace(/\s*\([^)]*\)/g, "")
+      .replace(/\s{2,}/g, " ")
+      .replace(/\s*[-–·|]\s*$/, "")
+      .trim();
+    return cleaned || String(raw || "").trim();
+  };
   const segmentNames = [];
   for (const seg of segments) {
     const variation = seg.service_variation_id ? catalogById[seg.service_variation_id] : null;
@@ -245,7 +254,9 @@ export function mapSquareBookingToRows(
     const parentItem = variation.item_variation_data?.item_id
       ? catalogById[variation.item_variation_data.item_id]
       : null;
-    const name = parentItem?.item_data?.name || variation.item_variation_data?.name || variation.item_data?.name;
+    const name = cleanServiceName(
+      parentItem?.item_data?.name || variation.item_variation_data?.name || variation.item_data?.name
+    );
     if (name && !segmentNames.some((n) => n.toLowerCase() === name.toLowerCase())) {
       segmentNames.push(name);
     }

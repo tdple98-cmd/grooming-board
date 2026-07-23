@@ -1,4 +1,4 @@
-export const LOGO_SRC = "/grooming-board-logo.webp";
+export const LOGO_SRC = "/grooming-board-logo.png";
 
 export function BrandLogo({ maxWidth = 280, style = {} }) {
   return (
@@ -11,6 +11,8 @@ export function BrandLogo({ maxWidth = 280, style = {} }) {
         height: "auto",
         display: "block",
         margin: "0 auto",
+        borderRadius: "22%",
+        boxShadow: "0 6px 24px rgba(42,36,32,0.10)",
         ...style,
       }}
     />

@@ -494,6 +494,11 @@ export default function App() {
                   type="date"
                   value={boardDate}
                   onChange={(e) => e.target.value && goToDate(e.target.value)}
+                  onClick={(e) => {
+                    // Desktop browsers focus a date input on click but don't open
+                    // the calendar — needs an explicit showPicker() call.
+                    try { e.currentTarget.showPicker?.(); } catch { /* needs gesture / unsupported */ }
+                  }}
                   style={{ position: "absolute", inset: 0, opacity: 0, width: "100%", height: "100%", cursor: "pointer" }}
                 />
               </label>

@@ -593,6 +593,9 @@ export default function App() {
                     ) : (
                       <div style={{ fontSize: 11.5, color: C.slate, marginTop: 3 }}>Drop {d.dropTime} · Pick up {d.pickTime}</div>
                     )}
+                    {!d.dueRebook && d.service && (
+                      <div style={{ fontSize: 11.5, color: C.goldDeep, fontWeight: 600, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.service}</div>
+                    )}
                   </div>
 
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>

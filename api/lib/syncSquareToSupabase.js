@@ -11,7 +11,7 @@ import {
 import { isGenericPetName, mapSquareBookingToRows, assignPetNamesForDayBookings } from "./mapBooking.js";
 import { melbourneDayBounds, melbourneDateString, todayMelbourneDateString } from "./melbourne.js";
 import { dedupeDuplicateSlots, pickBestAppointmentRow } from "../../lib/dedupeAppointments.js";
-import { isKeptSquareBookingId } from "../../lib/squareBookingId.js";
+import { baseSquareBookingId, isKeptSquareBookingId } from "../../lib/squareBookingId.js";
 
 function shiftMelbourneDateString(dateStr, deltaDays) {
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -220,16 +220,62 @@ async function updateDogRow(supabase, dogId, dogPayload, { preserveName = false 
   if (error) throw error;
 }
 
-async function findOrCreateDog(supabase, dogPayload, { squareBookingId }) {
+/**
+ * Two same-day cards sharing one dog row are two different physical dogs
+ * (legacy duplicate-name corruption) — give this booking its own dog row.
+ */
+async function splitSharedDogRow(supabase, { apptId, dogId, dogPayload, squareBookingId, appointmentDate }) {
+  if (!apptId || !appointmentDate || !dogPayload.name) return null;
+
+  const { data: dogRow, error: dogErr } = await supabase
+    .from("dogs")
+    .select("name")
+    .eq("id", dogId)
+    .maybeSingle();
+  if (dogErr || !dogRow) return null;
+  if ((dogRow.name || "").trim().toLowerCase() === dogPayload.name.trim().toLowerCase()) return null;
+
+  const { data: siblings, error: sibErr } = await supabase
+    .from("appointments")
+    .select("id, square_booking_id")
+    .eq("dog_id", dogId)
+    .eq("appointment_date", appointmentDate)
+    .neq("id", apptId);
+  if (sibErr) return null;
+
+  const base = baseSquareBookingId(squareBookingId);
+  const shared = (siblings || []).some((s) => baseSquareBookingId(s.square_booking_id) !== base);
+  if (!shared) return null;
+
+  const newDogId = await insertDogRow(supabase, dogPayload);
+  const { error: relinkErr } = await supabase
+    .from("appointments")
+    .update({ dog_id: newDogId })
+    .eq("id", apptId);
+  if (relinkErr) throw relinkErr;
+  return newDogId;
+}
+
+async function findOrCreateDog(supabase, dogPayload, { squareBookingId, appointmentDate }) {
   const { data: existingAppt, error: apptLookupErr } = await supabase
     .from("appointments")
-    .select("dog_id")
+    .select("id, dog_id")
     .eq("square_booking_id", squareBookingId)
     .maybeSingle();
   if (apptLookupErr) throw apptLookupErr;
 
   if (existingAppt?.dog_id) {
     const locked = await readDogNameLocked(supabase, existingAppt.dog_id);
+    if (!locked) {
+      const relinked = await splitSharedDogRow(supabase, {
+        apptId: existingAppt.id,
+        dogId: existingAppt.dog_id,
+        dogPayload,
+        squareBookingId,
+        appointmentDate,
+      });
+      if (relinked) return relinked;
+    }
     await updateDogRow(supabase, existingAppt.dog_id, dogPayload, { preserveName: locked });
     return existingAppt.dog_id;
   }
@@ -424,7 +470,10 @@ export async function syncSquareToSupabase({
           dayBand++;
           const squareBookingId = mapped.appointment.square_booking_id;
           squareBookingIds.push(squareBookingId);
-          const dogId = await findOrCreateDog(supabase, mapped.dog, { squareBookingId });
+          const dogId = await findOrCreateDog(supabase, mapped.dog, {
+            squareBookingId,
+            appointmentDate: mapped.appointment.appointment_date,
+          });
 
           const existingAppt = await findExistingAppointment(
             supabase,

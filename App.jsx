@@ -6,6 +6,8 @@ import SetPassword from "./components/SetPassword.jsx";
 import { AppLoadingScreen } from "./components/BrandLogo.jsx";
 import { EditField, PresetEditor } from "./components/EditField.jsx";
 import { LazyImage } from "./components/LazyImage.jsx";
+import { signPhotoDisplayMap } from "./lib/groomPhotos.js";
+import { formatVisitDate } from "./lib/dates.js";
 
 // The Poodle Specialist — Grooming Board
 
@@ -71,12 +73,17 @@ function smsDogName(d) {
 }
 
 function DogPhotoTile({ d, size, onTap, uploading, lazy = true, preferThumb = true }) {
-  const src = groomPhotoSrc(d, { preferThumb });
+  const todaySrc = groomPhotoSrc(d, { preferThumb });
+  const prevSrc = preferThumb
+    ? d?.prevPhotoThumbUrl || d?.prevPhotoUrl || null
+    : d?.prevPhotoUrl || d?.prevPhotoThumbUrl || null;
+  const src = todaySrc || prevSrc;
+  const showingPrev = !todaySrc && Boolean(prevSrc);
   const canTap = onTap && !d.readOnly && !d.dueRebook;
   return (
     <div
       onClick={canTap ? (e) => { e.stopPropagation(); onTap(d.id); } : undefined}
-      title={canTap ? (src ? "Tap to change photo" : "Tap to add photo") : undefined}
+      title={canTap ? (todaySrc ? "Tap to change photo" : showingPrev ? "Last visit's photo — tap to add today's" : "Tap to add photo") : undefined}
       style={{
         width: size,
         height: size,
@@ -88,17 +95,27 @@ function DogPhotoTile({ d, size, onTap, uploading, lazy = true, preferThumb = tr
         fontSize: Math.round(size * 0.54),
         overflow: "hidden",
         cursor: canTap ? (uploading ? "wait" : "pointer") : "default",
-        border: src ? "2px solid " + C.gold : canTap ? "1.5px dashed " + C.line : "none",
+        border: todaySrc ? "2px solid " + C.gold : showingPrev ? "1.5px dashed " + C.gold : canTap ? "1.5px dashed " + C.line : "none",
         position: "relative",
         flexShrink: 0,
       }}
     >
       {src ? (
-        lazy ? (
-          <LazyImage src={src} alt="" style={{ width: "100%", height: "100%" }} />
-        ) : (
-          <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        )
+        <>
+          {lazy ? (
+            <LazyImage src={src} alt="" style={{ width: "100%", height: "100%" }} />
+          ) : (
+            <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          )}
+          {showingPrev && (
+            <span style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(26,22,18,0.72)", color: C.gold, fontSize: 8, fontWeight: 700, letterSpacing: 0.4, textAlign: "center", padding: "2px 0", textTransform: "uppercase", pointerEvents: "none" }}>
+              Last visit
+            </span>
+          )}
+          {showingPrev && canTap && (
+            <span style={{ position: "absolute", top: 3, left: 3, fontSize: 11, lineHeight: 1, background: "rgba(255,255,255,0.92)", borderRadius: 999, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 4px rgba(42,36,32,0.15)" }}>📷</span>
+          )}
+        </>
       ) : uploading ? (
         <span style={{ fontSize: 11, color: C.slate, fontWeight: 600 }}>…</span>
       ) : (
@@ -109,6 +126,42 @@ function DogPhotoTile({ d, size, onTap, uploading, lazy = true, preferThumb = tr
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function PhotoHistoryStrip({ history }) {
+  const [urls, setUrls] = useState({});
+  const paths = (history || []).map((h) => h.path);
+  const pathsKey = paths.join("|");
+
+  useEffect(() => {
+    let alive = true;
+    if (!paths.length) { setUrls({}); return undefined; }
+    signPhotoDisplayMap(paths).then(({ full, thumb }) => {
+      if (!alive) return;
+      const map = {};
+      for (const p of paths) map[p] = thumb[p] || full[p] || null;
+      setUrls(map);
+    }).catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathsKey]);
+
+  const items = (history || []).filter((h) => urls[h.path]);
+  if (!items.length) return null;
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 700, color: C.goldDeep, marginBottom: 7 }}>Photo history</div>
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
+        {items.map((h) => (
+          <div key={h.path} style={{ flexShrink: 0, width: 76 }}>
+            <img src={urls[h.path]} alt="" style={{ width: 76, height: 76, borderRadius: 12, objectFit: "cover", border: "1px solid " + C.line, background: "#1a1612", display: "block" }} />
+            <div style={{ fontSize: 10, color: C.slate, textAlign: "center", marginTop: 3 }}>{formatVisitDate(h.date)}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -588,7 +641,10 @@ export default function App() {
                       <a href={smsHref(d.phone, thirtyText(d))} style={{ ...bigBtn(C.green), flex: "0 0 auto", textDecoration: "none", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "14px 16px" }}>⏱ 30 mins</a>
                     )}
 
-                    {/* When READY, pickup dropdown (photo + picked up) */}
+                    {/* When READY, one-tap pickup text + pickup dropdown */}
+                    {d.status === "ready" && (
+                      <a href={smsHref(d.phone, pickupText(d))} style={{ ...bigBtn(C.green), flex: "0 0 auto", textDecoration: "none", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "14px 14px" }}>✉ Text ready</a>
+                    )}
                     {d.status === "ready" && (
                       <div style={{ flex: 1, position: "relative" }}>
                         <button onClick={() => setMenuId(menuId === "p_" + d.id ? null : "p_" + d.id)} style={bigBtn(C.green)}>🐾 Pickup ▾</button>
@@ -596,7 +652,8 @@ export default function App() {
                           <>
                             <div onClick={() => setMenuId(null)} style={{ position: "fixed", inset: 0, zIndex: 29 }} />
                             <div style={{ position: "absolute", left: 0, right: 0, bottom: "calc(100% + 8px)", zIndex: 30, background: C.paper, border: "1px solid " + C.line, borderRadius: 14, boxShadow: "0 10px 30px rgba(42,36,32,0.2)", overflow: "hidden" }}>
-                              <button onClick={() => { setMenuId(null); openSheet(d.id); setTab("pickup"); }} style={{ ...menuRow, width: "100%", background: "none", border: "none", textAlign: "left" }}>📷 Send finished photo</button>
+                              <a href={smsHref(d.phone, pickupText(d))} onClick={() => setMenuId(null)} style={{ ...menuRow, display: "block", width: "100%", background: "none", border: "none", textAlign: "left", textDecoration: "none", color: C.ink, boxSizing: "border-box" }}>✉ Text “ready for pickup”</a>
+                              <button onClick={() => { setMenuId(null); openSheet(d.id); setTab("pickup"); }} style={{ ...menuRow, width: "100%", background: "none", border: "none", borderTop: "1px solid " + C.line, textAlign: "left" }}>📷 Send finished photo</button>
                               <button onClick={() => { update(d.id, { collected: true }); setMenuId(null); }} style={{ ...menuRow, width: "100%", background: "none", border: "none", borderTop: "1px solid " + C.line, color: C.green, textAlign: "left", fontWeight: 700 }}>✓ Picked up — done</button>
                             </div>
                           </>
@@ -709,6 +766,12 @@ export default function App() {
                     </div>
                     {lastVisitPhotoSrc(open.lastVisit, open) && <div style={{ fontSize: 10.5, color: C.slate, fontStyle: "italic", marginTop: 7 }}>Photo from last visit.</div>}
                     {open.lastVisit.note && <div style={{ fontSize: 13, color: C.slate, fontStyle: "italic", marginTop: 9, lineHeight: 1.4 }}>“{open.lastVisit.note}”</div>}
+                    <PhotoHistoryStrip history={open.photoHistory} />
+                  </div>
+                ) : open.photoHistory?.length ? (
+                  <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 700, color: C.goldDeep }}>Previous grooms</div>
+                    <PhotoHistoryStrip history={open.photoHistory} />
                   </div>
                 ) : (
                   <div style={{ background: C.paper, border: "1px dashed " + C.line, borderRadius: 14, padding: 14, marginBottom: 16, textAlign: "center" }}>

@@ -91,7 +91,7 @@ export function isGenericPetName(name, customer) {
 function splitMultiPetNames(text, customer) {
   if (!text?.trim()) return [];
   const cleaned = stripWeightFromPetName(text.trim());
-  const parts = cleaned.split(/\s*(?:,|&|\band\b|\/|\|)\s*/i);
+  const parts = cleaned.split(/\s*(?:,|&|\+|\band\b|\/|\||\r?\n)\s*/i);
   const names = [];
   for (const part of parts) {
     const name = cleanPetName(part);
@@ -135,13 +135,24 @@ export function assignPetNamesForDayBookings(dayBookings, customersById, custome
     const attrs = customerCustomAttrsById[cid] || [];
     const profileNames = parseDogNames({ customer, customerCustomAttributes: attrs });
 
+    // Never give two of one customer's same-day bookings the same name — each
+    // card must be a distinct dog. Booking notes win, then unused profile
+    // names in order, then a numbered owner fallback staff can rename.
+    const used = new Set();
+    const takeUnusedProfileName = () =>
+      profileNames.find((n) => !used.has(n.toLowerCase())) || "";
+
     for (let i = 0; i < sorted.length; i++) {
       const booking = sorted[i];
       let name = petNameFromBookingNotes(booking);
-      if (!name && profileNames.length === sorted.length) name = profileNames[i];
-      else if (!name && profileNames.length === 1) name = profileNames[0];
-      else if (!name && profileNames.length) name = profileNames[Math.min(i, profileNames.length - 1)];
-      else if (!name) name = ownerDogFallback(customer);
+      if (name && sorted.length > 1 && used.has(name.toLowerCase())) name = "";
+      if (!name && sorted.length === 1 && profileNames.length) name = profileNames[0];
+      if (!name) name = takeUnusedProfileName();
+      if (!name) {
+        const fallback = ownerDogFallback(customer);
+        name = i === 0 && sorted.length === 1 ? fallback : `${fallback} ${i + 1}`;
+      }
+      used.add(name.toLowerCase());
       nameByBookingId.set(booking.id, name);
     }
   }
@@ -149,19 +160,22 @@ export function assignPetNamesForDayBookings(dayBookings, customersById, custome
 }
 
 /**
- * Resolve pet name(s) from Square customer custom attributes (priority order from client).
- * 1. dog_name
- * 2. Pet's Name intake field (strip weight)
- * 3. "[owner]'s dog"
+ * Resolve pet name(s) from Square customer custom attributes.
+ * dog_name names first, then any extra names from the Pet's Name intake field
+ * (union, case-insensitive dedupe) so multi-dog households resolve every dog
+ * even when only one field lists them all. Falls back to "[owner]'s dog".
  */
 export function parseDogNames({ customer, customerCustomAttributes }) {
   const byKey = customerAttrsByKey(customerCustomAttributes);
 
   const fromDogName = splitMultiPetNames(byKey[DOG_NAME_KEY], customer);
-  if (fromDogName.length) return fromDogName;
-
   const fromIntake = splitMultiPetNames(byKey[PET_NAME_INTAKE_KEY], customer);
-  if (fromIntake.length) return fromIntake;
+
+  const names = [...fromDogName];
+  for (const name of fromIntake) {
+    if (!names.some((n) => n.toLowerCase() === name.toLowerCase())) names.push(name);
+  }
+  if (names.length) return names;
 
   return [ownerDogFallback(customer)];
 }

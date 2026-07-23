@@ -16,6 +16,7 @@ import {
   annotateLinkedBookings,
   fetchAppointmentsByIds,
   fetchLatestVisitsByDog,
+  fetchPhotoHistoryByDog,
   fetchTodayAppointments,
   mapRowsToBoardDogs,
 } from "../lib/boardFetch.js";
@@ -32,10 +33,17 @@ async function attachPhotoUrls(rows) {
   for (const row of rows) {
     if (row.groomPhotoPath) paths.push(row.groomPhotoPath);
     if (row.lastVisit?.photoPath) paths.push(row.lastVisit.photoPath);
+    if (row.prevPhotoPath) paths.push(row.prevPhotoPath);
   }
   const { full, thumb } = await signPhotoDisplayMap(paths);
   return rows.map((row) => ({
     ...row,
+    prevPhotoUrl: row.prevPhotoPath
+      ? full[row.prevPhotoPath] || row.prevPhotoUrl || null
+      : row.prevPhotoUrl || null,
+    prevPhotoThumbUrl: row.prevPhotoPath
+      ? thumb[row.prevPhotoPath] || full[row.prevPhotoPath] || row.prevPhotoThumbUrl || null
+      : row.prevPhotoThumbUrl || null,
     groomPhotoUrl: row.groomPhotoPath
       ? full[row.groomPhotoPath] || row.groomPhotoUrl || null
       : row.groomPhotoUrl || null,
@@ -111,9 +119,14 @@ export function useBoard(session) {
 
     const todayRows = await fetchTodayAppointments(date);
     const dogIds = [...new Set(todayRows.map((a) => a.dog_id).filter(Boolean))];
-    const visitByDog = await fetchLatestVisitsByDog(dogIds);
+    const [visitByDog, historyByDog] = await Promise.all([
+      fetchLatestVisitsByDog(dogIds),
+      fetchPhotoHistoryByDog(dogIds),
+    ]);
 
-    const mapped = annotateLinkedBookings(dedupeBoardDogs(mapRowsToBoardDogs(todayRows, visitByDog)));
+    const mapped = annotateLinkedBookings(
+      dedupeBoardDogs(mapRowsToBoardDogs(todayRows, visitByDog, {}, {}, historyByDog))
+    );
     const withPhotos = await attachPhotoUrls(mapped);
 
     setDogs((current) =>
@@ -139,9 +152,14 @@ export function useBoard(session) {
 
     const dueEntries = computeDueToRebook(appointments, today);
     const dogIds = dueEntries.map((e) => e.dogId);
-    const visitByDog = await fetchLatestVisitsByDog(dogIds);
+    const [visitByDog, historyByDog] = await Promise.all([
+      fetchLatestVisitsByDog(dogIds),
+      fetchPhotoHistoryByDog(dogIds),
+    ]);
 
-    const mapped = dueEntries.map((e) => dueEntryToBoardDog(e, visitByDog[e.dogId]));
+    const mapped = dueEntries.map((e) =>
+      dueEntryToBoardDog(e, visitByDog[e.dogId], {}, historyByDog[e.dogId] || [])
+    );
     setDueDogs(await attachPhotoUrls(mapped));
   }, []);
 
@@ -154,8 +172,13 @@ export function useBoard(session) {
       if (!todayRows.length) return;
 
       const dogIds = [...new Set(todayRows.map((a) => a.dog_id).filter(Boolean))];
-      const visitByDog = await fetchLatestVisitsByDog(dogIds);
-      const mapped = annotateLinkedBookings(dedupeBoardDogs(mapRowsToBoardDogs(todayRows, visitByDog)));
+      const [visitByDog, historyByDog] = await Promise.all([
+        fetchLatestVisitsByDog(dogIds),
+        fetchPhotoHistoryByDog(dogIds),
+      ]);
+      const mapped = annotateLinkedBookings(
+        dedupeBoardDogs(mapRowsToBoardDogs(todayRows, visitByDog, {}, {}, historyByDog))
+      );
       const withPhotos = await attachPhotoUrls(mapped);
 
       setDogs((current) => mergeDogLists(current, withPhotos, editGuardRef.current));
@@ -406,15 +429,27 @@ export function useBoard(session) {
       }
     }
 
+    if (patch.groomPhotoPath && current.collected) {
+      // Photo added after pickup — keep the visit history row in sync.
+      await supabase
+        .from("visits")
+        .update({ photo_url: patch.groomPhotoPath })
+        .eq("appointment_id", id);
+    }
+
     if (patch.collected === true) {
       const { data: existingVisit } = await supabase
         .from("visits")
-        .select("id")
+        .select("id, photo_url")
         .eq("appointment_id", id)
         .maybeSingle();
 
       const visitDate = todayMelbourneDateString();
       const photoPath = current.groomPhotoPath || null;
+
+      if (existingVisit && !existingVisit.photo_url && photoPath) {
+        await supabase.from("visits").update({ photo_url: photoPath }).eq("id", existingVisit.id);
+      }
 
       if (!existingVisit) {
         const { error } = await supabase.from("visits").insert({

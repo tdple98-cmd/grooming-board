@@ -21,7 +21,7 @@ function shiftMelbourneDateString(dateStr, deltaDays) {
 
 /** Default sync window: today + upcoming days (Melbourne). Past rows in Supabase are kept. */
 export function getDefaultSyncWindow() {
-  const totalDays = Math.max(1, parseInt(process.env.SQUARE_SYNC_DAYS || "7", 10));
+  const totalDays = Math.max(1, parseInt(process.env.SQUARE_SYNC_DAYS || "31", 10));
   const back = Math.max(0, parseInt(process.env.SQUARE_SYNC_DAYS_BACK || "0", 10));
   const forward = Math.max(0, parseInt(process.env.SQUARE_SYNC_DAYS_FORWARD || String(totalDays - 1), 10));
   const today = todayMelbourneDateString();
@@ -34,7 +34,7 @@ export function getDefaultSyncWindow() {
 /** History backfill: past N days through upcoming week (for due-to-rebook data). */
 export function getHistorySyncWindow() {
   const forward = Math.max(0, parseInt(process.env.SQUARE_SYNC_DAYS_FORWARD || "6", 10));
-  const back = Math.max(1, parseInt(process.env.SQUARE_SYNC_DAYS_BACK || "90", 10));
+  const back = Math.max(1, parseInt(process.env.SQUARE_SYNC_DAYS_BACK || "365", 10));
   const today = todayMelbourneDateString();
   const startDate = shiftMelbourneDateString(today, -back);
   const days = back + forward + 1;
@@ -388,6 +388,12 @@ export async function syncSquareToSupabase({
   }
 
   bookings = bookings.filter((b) => b.status === "ACCEPTED" || b.status === "PENDING");
+
+  // History backfill imports real customers only — skip test/walk-in slots
+  // that have no Square customer profile attached.
+  if (syncMode === "history") {
+    bookings = bookings.filter((b) => b.customer_id);
+  }
 
   const customerIds = [...new Set(bookings.map((b) => b.customer_id).filter(Boolean))];
   const customersById = await batchRetrieveCustomers({ environment, accessToken, customerIds });

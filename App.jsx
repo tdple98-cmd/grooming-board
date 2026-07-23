@@ -7,7 +7,22 @@ import { AppLoadingScreen } from "./components/BrandLogo.jsx";
 import { EditField, PresetEditor } from "./components/EditField.jsx";
 import { LazyImage } from "./components/LazyImage.jsx";
 import { signPhotoDisplayMap } from "./lib/groomPhotos.js";
-import { formatVisitDate } from "./lib/dates.js";
+import { formatVisitDate, todayMelbourneDateString } from "./lib/dates.js";
+
+function shiftDateStr(dateStr, deltaDays) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + deltaDays, 12)).toISOString().slice(0, 10);
+}
+
+function boardDateLabel(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString("en-AU", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  });
+}
 
 // The Poodle Specialist — Grooming Board
 
@@ -215,6 +230,10 @@ export default function App() {
     liveBadgeColor,
     liveBadgeLabel,
     lastSyncedAt,
+    boardDate,
+    goToDate,
+    backfilling,
+    backfillHistory,
   } = useBoard(session);
   const photoInputRef = useRef(null);
   const galleryInputRef = useRef(null);
@@ -462,6 +481,29 @@ export default function App() {
             <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "Fraunces, serif" }}>{dueDogs.length}</span>
           </button>
         </div>
+        {boardMode === "today" && (() => {
+          const todayStr = todayMelbourneDateString();
+          const onToday = boardDate === todayStr;
+          return (
+            <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+              <button onClick={() => goToDate(shiftDateStr(boardDate, -1))} style={{ background: "rgba(244,239,231,0.08)", color: "rgba(244,239,231,0.85)", border: "1px solid rgba(244,239,231,0.13)", borderRadius: 11, padding: "7px 12px", fontSize: 14, fontWeight: 700 }}>‹</button>
+              <label style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: onToday ? "rgba(244,239,231,0.08)" : C.gold, color: onToday ? "rgba(244,239,231,0.9)" : C.brown, border: "1px solid " + (onToday ? "rgba(244,239,231,0.13)" : C.gold), borderRadius: 11, padding: "7px 6px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                <span>{onToday ? "Today · " : ""}{boardDateLabel(boardDate)}{onToday ? "" : " · view only"}</span>
+                <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
+                <input
+                  type="date"
+                  value={boardDate}
+                  onChange={(e) => e.target.value && goToDate(e.target.value)}
+                  style={{ position: "absolute", inset: 0, opacity: 0, width: "100%", height: "100%", cursor: "pointer" }}
+                />
+              </label>
+              <button onClick={() => goToDate(shiftDateStr(boardDate, 1))} style={{ background: "rgba(244,239,231,0.08)", color: "rgba(244,239,231,0.85)", border: "1px solid rgba(244,239,231,0.13)", borderRadius: 11, padding: "7px 12px", fontSize: 14, fontWeight: 700 }}>›</button>
+              {!onToday && (
+                <button onClick={() => goToDate(null)} style={{ background: C.green, color: "#fff", border: "none", borderRadius: 11, padding: "7px 10px", fontSize: 11, fontWeight: 700 }}>Today</button>
+              )}
+            </div>
+          );
+        })()}
         {boardMode === "today" && (
           <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
             {[{ key: "all", label: "All" }, ...STEPS].map((f) => {
@@ -493,10 +535,16 @@ export default function App() {
       <div style={{ padding: "16px 14px 40px" }}>
         {visible.length === 0 && (
           <div style={{ textAlign: "center", color: C.slate, padding: "50px 20px", fontFamily: "Fraunces, serif", fontSize: 17 }}>
-            {boardMode === "due" ? "No dogs due for rebook." : "No appointments for today."}
+            {boardMode === "due"
+              ? "No dogs due for rebook."
+              : boardDate === todayMelbourneDateString()
+                ? "No appointments for today."
+                : `No appointments stored for ${boardDateLabel(boardDate)}.`}
             {boardMode === "today" && (
               <div style={{ fontFamily: "Poppins, sans-serif", fontSize: 13, marginTop: 6, lineHeight: 1.45 }}>
-                Settings → Sync from Square to load today&apos;s bookings.
+                {boardDate === todayMelbourneDateString()
+                  ? "Settings → Sync from Square to load today's bookings."
+                  : "Past days need Settings → Backfill history run once. Future days appear after the daily Square sync reaches them."}
               </div>
             )}
           </div>
@@ -604,8 +652,10 @@ export default function App() {
                 ) : d.status === "noshow" ? (
                   <>
                     <span style={{ flex: 1, textAlign: "center", color: C.rose, fontSize: 13, fontWeight: 700 }}>No-show — didn’t arrive</span>
-                    <button onClick={() => setStatus(d.id, "booked")} style={{ flexShrink: 0, background: "transparent", border: "1.5px solid " + C.line, color: C.brown, borderRadius: 13, padding: "13px 16px", fontSize: 14, fontWeight: 700 }}>Undo</button>
+                    {!d.readOnly && <button onClick={() => setStatus(d.id, "booked")} style={{ flexShrink: 0, background: "transparent", border: "1.5px solid " + C.line, color: C.brown, borderRadius: 13, padding: "13px 16px", fontSize: 14, fontWeight: 700 }}>Undo</button>}
                   </>
+                ) : d.readOnly ? (
+                  <span style={{ flex: 1, textAlign: "center", color: C.slate, fontSize: 13, fontWeight: 600 }}>{stepOf(d.status).label} — view only</span>
                 ) : (
                   <>
                     {/* STATUS DROPDOWN — pick where the dog is */}
@@ -923,6 +973,16 @@ export default function App() {
           >
             {syncing ? "Syncing from Square…" : "Sync from Square"}
           </button>
+          <button
+            onClick={() => backfillHistory(12)}
+            disabled={backfilling || syncing}
+            style={{ width: "100%", background: backfilling ? C.slate : C.paper, color: backfilling ? "#fff" : C.goldDeep, border: "1.5px solid " + C.gold, borderRadius: 14, padding: "13px", fontSize: 14, fontWeight: 700, marginBottom: 8 }}
+          >
+            {backfilling ? "Backfilling history… keep this open" : "Backfill history (12 months)"}
+          </button>
+          <div style={{ fontSize: 11.5, color: C.slate, marginBottom: 8, lineHeight: 1.4, textAlign: "center" }}>
+            One-off import of the past year&apos;s Square bookings (real customers only) so past days and photo history fill in. Takes a few minutes.
+          </div>
           <div style={{ fontSize: 12, color: C.slate, marginBottom: 16, lineHeight: 1.35, textAlign: "center" }}>
             {lastSyncedAt
               ? `Board updated ${Math.max(0, Math.round((Date.now() - lastSyncedAt) / 60000))} min ago`

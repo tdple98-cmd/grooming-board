@@ -71,6 +71,8 @@ export function useBoard(session) {
   const [dogs, setDogs] = useState([]);
   const [dueDogs, setDueDogs] = useState([]);
   const [boardMode, setBoardMode] = useState("today");
+  const [boardDate, setBoardDate] = useState(() => todayMelbourneDateString());
+  const [backfilling, setBackfilling] = useState(false);
   const [presets, setPresets] = useState(DEFAULT_PRESETS);
   const [boardLoading, setBoardLoading] = useState(true);
   const [boardError, setBoardError] = useState("");
@@ -82,12 +84,14 @@ export function useBoard(session) {
   const [liveSyncEnabled, setLiveSyncEnabled] = useState(() => readLiveSyncEnabled());
 
   const boardModeRef = useRef(boardMode);
+  const boardDateRef = useRef(boardDate);
   const loadedForUserRef = useRef(null);
   const editGuardRef = useRef(createEditGuard());
   const liveSyncRef = useRef(liveSyncEnabled);
   const spotCheckRunningRef = useRef(false);
 
   boardModeRef.current = boardMode;
+  boardDateRef.current = boardDate;
   liveSyncRef.current = liveSyncEnabled;
 
   const touchSynced = useCallback(() => {
@@ -115,7 +119,8 @@ export function useBoard(session) {
     } = await supabase.auth.getSession();
     if (!s) return;
     setBoardError("");
-    const date = todayMelbourneDateString();
+    const date = boardDateRef.current || todayMelbourneDateString();
+    const isToday = date === todayMelbourneDateString();
 
     const todayRows = await fetchTodayAppointments(date);
     const dogIds = [...new Set(todayRows.map((a) => a.dog_id).filter(Boolean))];
@@ -124,9 +129,10 @@ export function useBoard(session) {
       fetchPhotoHistoryByDog(dogIds),
     ]);
 
-    const mapped = annotateLinkedBookings(
+    let mapped = annotateLinkedBookings(
       dedupeBoardDogs(mapRowsToBoardDogs(todayRows, visitByDog, {}, {}, historyByDog))
     );
+    if (!isToday) mapped = mapped.map((d) => ({ ...d, readOnly: true }));
     const withPhotos = await attachPhotoUrls(mapped);
 
     setDogs((current) =>
@@ -135,6 +141,22 @@ export function useBoard(session) {
     await loadPresets();
     touchSynced();
   }, [loadPresets, touchSynced]);
+
+  const goToDate = useCallback(
+    async (dateStr) => {
+      const next = dateStr || todayMelbourneDateString();
+      boardDateRef.current = next;
+      setBoardDate(next);
+      setDogs([]);
+      setBoardLoading(true);
+      try {
+        await loadBoard();
+      } finally {
+        setBoardLoading(false);
+      }
+    },
+    [loadBoard]
+  );
 
   const loadDueDogs = useCallback(async () => {
     const {
@@ -167,7 +189,8 @@ export function useBoard(session) {
     async (ids) => {
       if (!ids.length) return;
       const rows = await fetchAppointmentsByIds(ids);
-      const date = todayMelbourneDateString();
+      const date = boardDateRef.current || todayMelbourneDateString();
+      const isToday = date === todayMelbourneDateString();
       const todayRows = rows.filter((a) => String(a.appointment_date).slice(0, 10) === date);
       if (!todayRows.length) return;
 
@@ -176,9 +199,10 @@ export function useBoard(session) {
         fetchLatestVisitsByDog(dogIds),
         fetchPhotoHistoryByDog(dogIds),
       ]);
-      const mapped = annotateLinkedBookings(
+      let mapped = annotateLinkedBookings(
         dedupeBoardDogs(mapRowsToBoardDogs(todayRows, visitByDog, {}, {}, historyByDog))
       );
+      if (!isToday) mapped = mapped.map((d) => ({ ...d, readOnly: true }));
       const withPhotos = await attachPhotoUrls(mapped);
 
       setDogs((current) => mergeDogLists(current, withPhotos, editGuardRef.current));
@@ -702,6 +726,63 @@ export function useBoard(session) {
     }
   };
 
+  const shiftDateString = (dateStr, deltaDays) => {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d + deltaDays, 12)).toISOString().slice(0, 10);
+  };
+
+  /**
+   * Backfill Square history in 30-day chunks (client-driven so each serverless
+   * call stays under its time limit). History mode never purges and skips
+   * bookings without a Square customer profile.
+   */
+  const backfillHistory = async (monthsBack = 12) => {
+    if (backfilling) return;
+    setBackfilling(true);
+    setBoardError("");
+    const today = todayMelbourneDateString();
+    const daysBack = Math.max(30, Math.round(monthsBack * 30.5));
+    const chunkSize = 30;
+    const chunks = [];
+    for (let offset = daysBack; offset > 0; offset -= chunkSize) {
+      const days = Math.min(chunkSize, offset);
+      chunks.push({ date: shiftDateString(today, -offset), days });
+    }
+
+    let imported = 0;
+    let failed = 0;
+    try {
+      const {
+        data: { session: s },
+      } = await supabase.auth.getSession();
+      for (let i = 0; i < chunks.length; i++) {
+        setBoardNotice(`Backfilling history… ${i + 1}/${chunks.length} (from ${chunks[i].date})`);
+        try {
+          const res = await fetch("/api/square/sync", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${s?.access_token || ""}`,
+            },
+            body: JSON.stringify({ mode: "history", date: chunks[i].date, days: chunks[i].days }),
+          });
+          const json = await res.json().catch(() => null);
+          if (!res.ok || !json?.ok) failed++;
+          else imported += json.upserted || 0;
+        } catch {
+          failed++;
+        }
+      }
+      setBoardNotice(
+        `History backfill done — ${imported} appointment(s) imported${failed ? `, ${failed} of ${chunks.length} chunks failed (run again to retry)` : ""}.`
+      );
+      if (boardModeRef.current === "due") await loadDueDogs();
+      else await loadBoard();
+    } finally {
+      setBackfilling(false);
+    }
+  };
+
   const registerEdit = useCallback((key, active) => {
     if (active) editGuardRef.current.start(key);
     else editGuardRef.current.end(key);
@@ -734,6 +815,10 @@ export function useBoard(session) {
     liveBadgeLabel,
     realtimeStatus,
     lastSyncedAt,
+    boardDate,
+    goToDate,
+    backfilling,
+    backfillHistory,
     update,
     setStatus,
     uploadPhoto,

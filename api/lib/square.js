@@ -18,24 +18,41 @@ export function squareBaseUrl(environment) {
     : "https://connect.squareupsandbox.com";
 }
 
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const MAX_RETRIES = 4;
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 export async function squareRequest(path, { environment, accessToken, method = "GET", body } = {}) {
   const base = squareBaseUrl(environment);
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Square-Version": SQUARE_VERSION,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const msg = data?.errors?.[0]?.detail || data?.errors?.[0]?.code || res.statusText;
-    throw new Error(`Square API ${res.status}: ${msg}`);
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${base}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Square-Version": SQUARE_VERSION,
+        "Content-Type": "application/json",
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    if (RETRYABLE_STATUS.has(res.status) && attempt < MAX_RETRIES) {
+      // Square rate-limits bulk syncs — honour Retry-After, else back off.
+      const retryAfter = Number(res.headers.get("retry-after")) || 0;
+      await sleep(Math.max(retryAfter * 1000, 600 * 2 ** attempt));
+      continue;
+    }
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = data?.errors?.[0]?.detail || data?.errors?.[0]?.code || res.statusText;
+      throw new Error(`Square API ${res.status}: ${msg}`);
+    }
+    return data;
   }
-  return data;
 }
 
 /** List all bookings in range (paginated). */

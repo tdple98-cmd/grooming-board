@@ -741,8 +741,10 @@ export function useBoard(session) {
     setBackfilling(true);
     setBoardError("");
     const today = todayMelbourneDateString();
-    const daysBack = Math.max(30, Math.round(monthsBack * 30.5));
-    const chunkSize = 30;
+    const daysBack = Math.max(14, Math.round(monthsBack * 30.5));
+    // Small chunks with pauses keep each request well inside Square's rate
+    // limits and the serverless time budget.
+    const chunkSize = 14;
     const chunks = [];
     for (let offset = daysBack; offset > 0; offset -= chunkSize) {
       const days = Math.min(chunkSize, offset);
@@ -750,31 +752,56 @@ export function useBoard(session) {
     }
 
     let imported = 0;
-    let failed = 0;
     try {
       const {
         data: { session: s },
       } = await supabase.auth.getSession();
+
+      const runChunk = async (chunk) => {
+        const res = await fetch("/api/square/sync", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${s?.access_token || ""}`,
+          },
+          body: JSON.stringify({ mode: "history", date: chunk.date, days: chunk.days }),
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok || !json?.ok) return null;
+        return json.upserted || 0;
+      };
+
+      let failedChunks = [];
       for (let i = 0; i < chunks.length; i++) {
         setBoardNotice(`Backfilling history… ${i + 1}/${chunks.length} (from ${chunks[i].date})`);
+        let upserted = null;
         try {
-          const res = await fetch("/api/square/sync", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${s?.access_token || ""}`,
-            },
-            body: JSON.stringify({ mode: "history", date: chunks[i].date, days: chunks[i].days }),
-          });
-          const json = await res.json().catch(() => null);
-          if (!res.ok || !json?.ok) failed++;
-          else imported += json.upserted || 0;
+          upserted = await runChunk(chunks[i]);
         } catch {
-          failed++;
+          upserted = null;
         }
+        if (upserted == null) failedChunks.push(chunks[i]);
+        else imported += upserted;
+        await new Promise((r) => setTimeout(r, 4000));
       }
+
+      // One retry pass for anything that failed (rate limits recover quickly).
+      const stillFailed = [];
+      for (let i = 0; i < failedChunks.length; i++) {
+        setBoardNotice(`Retrying failed chunk ${i + 1}/${failedChunks.length} (from ${failedChunks[i].date})`);
+        await new Promise((r) => setTimeout(r, 8000));
+        let upserted = null;
+        try {
+          upserted = await runChunk(failedChunks[i]);
+        } catch {
+          upserted = null;
+        }
+        if (upserted == null) stillFailed.push(failedChunks[i]);
+        else imported += upserted;
+      }
+
       setBoardNotice(
-        `History backfill done — ${imported} appointment(s) imported${failed ? `, ${failed} of ${chunks.length} chunks failed (run again to retry)` : ""}.`
+        `History backfill done — ${imported} appointment(s) imported${stillFailed.length ? `, ${stillFailed.length} of ${chunks.length} chunks failed (run again to retry)` : ""}.`
       );
       if (boardModeRef.current === "due") await loadDueDogs();
       else await loadBoard();

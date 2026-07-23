@@ -771,7 +771,9 @@ export default function App() {
           )}
           {open.readOnly && (
             <div style={{ background: C.amber + "14", border: "1px solid " + C.amber + "44", borderRadius: 12, padding: "12px 14px", marginBottom: 12, fontSize: 13, color: C.amber, lineHeight: 1.45 }}>
-              Due for rebook — read only. Last groom {open.lastGroomDate}. Book in Square; this list updates after sync.
+              {open.dueRebook
+                ? `Due for rebook — read only. Last groom ${open.lastGroomDate}. Book in Square; this list updates after sync.`
+                : "Viewing another day — read only. Switch back to Today to make changes."}
             </div>
           )}
 
@@ -786,7 +788,7 @@ export default function App() {
           )}
 
           <div style={{ paddingTop: 16 }}>
-            {tab === "today" && (
+            {tab === "today" && !open.readOnly && (
               <>
                 <Hint>Tap chips or Add — only what’s different today.</Hint>
                 {TAGS.map((t) => <EditField key={t.key} label={t.label} accent={t.color} placeholder="Type and Add…" value={open.today[t.key]} onChange={(v) => update(open.id, { today: { ...open.today, [t.key]: v } })} presets={presets.today[t.key]} {...editFieldProps(open.id, "today")} />)}

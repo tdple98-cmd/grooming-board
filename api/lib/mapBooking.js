@@ -236,12 +236,21 @@ export function mapSquareBookingToRows(
   const primary = segments[0] || {};
   const durationMin = segments.reduce((sum, s) => sum + (s.duration_minutes || 0), 0) || 60;
 
-  const serviceVariationId = primary.service_variation_id;
-  const catalogObj = serviceVariationId ? catalogById[serviceVariationId] : null;
-  const serviceName =
-    catalogObj?.item_variation_data?.name ||
-    catalogObj?.item_data?.name ||
-    "Grooming appointment";
+  // Every segment the customer booked, named by the parent ITEM ("Full Groom")
+  // with the variation as fallback, joined as "Full Groom + Teeth Cleaning".
+  const segmentNames = [];
+  for (const seg of segments) {
+    const variation = seg.service_variation_id ? catalogById[seg.service_variation_id] : null;
+    if (!variation) continue;
+    const parentItem = variation.item_variation_data?.item_id
+      ? catalogById[variation.item_variation_data.item_id]
+      : null;
+    const name = parentItem?.item_data?.name || variation.item_variation_data?.name || variation.item_data?.name;
+    if (name && !segmentNames.some((n) => n.toLowerCase() === name.toLowerCase())) {
+      segmentNames.push(name);
+    }
+  }
+  const serviceName = segmentNames.join(" + ") || "Grooming appointment";
 
   const teamMember = primary.team_member_id ? teamById[primary.team_member_id] : null;
   const groomer = teamMember?.given_name || teamMember?.family_name || "";

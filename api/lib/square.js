@@ -97,9 +97,12 @@ export async function batchRetrieveCatalog({ environment, accessToken, objectIds
       environment,
       accessToken,
       method: "POST",
-      body: { object_ids: batch },
+      // related objects bring the parent ITEM of each variation, so the board
+      // can show the real service name ("Full Groom") not just "Under 10kg".
+      body: { object_ids: batch, include_related_objects: true },
     });
     for (const obj of data.objects || []) map[obj.id] = obj;
+    for (const obj of data.related_objects || []) map[obj.id] = obj;
   }
   return map;
 }

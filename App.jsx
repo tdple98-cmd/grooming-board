@@ -80,6 +80,9 @@ const stepOf = (k) => STEPS.find((s) => s.key === k) || STEPS[0];
 
 const GROOMERS = ["Thanh", "Wendy", "Trang", "Michelle", "Lynn", "Sandy", "Fei", "Claire"];
 
+/** "Due to rebook" tab hidden from staff nav (24 Jul) — flip true to bring it back. */
+const SHOW_DUE_TO_REBOOK = false;
+
 const TABS = [{ k: "today", l: "Today" }, { k: "specs", l: "Groom Specs" }, { k: "checkin", l: "Check-in" }, { k: "pickup", l: "Pickup" }];
 
 const TAGS = [
@@ -511,13 +514,17 @@ export default function App() {
           >
             Today
           </button>
-          <button
-            onClick={() => switchBoardMode("due")}
-            style={{ flex: 1, background: boardMode === "due" ? C.gold : "rgba(244,239,231,0.08)", color: boardMode === "due" ? C.brown : "rgba(244,239,231,0.8)", border: "1px solid " + (boardMode === "due" ? C.gold : "rgba(244,239,231,0.13)"), borderRadius: 11, padding: "7px 2px", fontSize: 10.5, fontWeight: 600, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}
-          >
-            <span>Due to rebook</span>
-            <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "Fraunces, serif" }}>{dueDogs.length}</span>
-          </button>
+          {/* "Due to rebook" tab hidden from staff nav (24 Jul) — SHOW_DUE_TO_REBOOK flips it back;
+              switchBoardMode("due"), dueDogs, and lib/dueToRebook.js are untouched. */}
+          {SHOW_DUE_TO_REBOOK && (
+            <button
+              onClick={() => switchBoardMode("due")}
+              style={{ flex: 1, background: boardMode === "due" ? C.gold : "rgba(244,239,231,0.08)", color: boardMode === "due" ? C.brown : "rgba(244,239,231,0.8)", border: "1px solid " + (boardMode === "due" ? C.gold : "rgba(244,239,231,0.13)"), borderRadius: 11, padding: "7px 2px", fontSize: 10.5, fontWeight: 600, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}
+            >
+              <span>Due to rebook</span>
+              <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "Fraunces, serif" }}>{dueDogs.length}</span>
+            </button>
+          )}
         </div>
         {boardMode === "today" && (() => {
           const todayStr = todayMelbourneDateString();

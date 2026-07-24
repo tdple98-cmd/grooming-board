@@ -24,6 +24,42 @@ function boardDateLabel(dateStr) {
   });
 }
 
+function startOfMonthStr(dateStr) {
+  return dateStr.slice(0, 7) + "-01";
+}
+
+function shiftMonthStr(monthStr, deltaMonths) {
+  const [y, m] = monthStr.split("-").map(Number);
+  const total = y * 12 + (m - 1) + deltaMonths;
+  const ny = Math.floor(total / 12);
+  const nm = ((total % 12) + 12) % 12;
+  return `${ny}-${String(nm + 1).padStart(2, "0")}-01`;
+}
+
+function monthLabel(monthStr) {
+  const [y, m] = monthStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1, 12)).toLocaleDateString("en-AU", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** Monday-first week grid for the given month; null cells pad the leading/trailing gaps. */
+function buildMonthGrid(monthStr) {
+  const [y, m] = monthStr.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1, 1, 12));
+  const daysInMonth = new Date(Date.UTC(y, m, 0, 12)).getUTCDate();
+  const firstWeekday = (first.getUTCDay() + 6) % 7;
+  const cells = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
+}
+
 // The Poodle Specialist — Grooming Board
 
 const C = {
@@ -245,6 +281,8 @@ export default function App() {
   const [tab, setTab] = useState("today");
   const [menuId, setMenuId] = useState(null);
   const [now, setNow] = useState(new Date());
+  const [showCal, setShowCal] = useState(false);
+  const [calCursor, setCalCursor] = useState(null);
   const [petNameDraft, setPetNameDraft] = useState("");
   const [finishingPickup, setFinishingPickup] = useState(false);
 
@@ -487,21 +525,67 @@ export default function App() {
           return (
             <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
               <button onClick={() => goToDate(shiftDateStr(boardDate, -1))} style={{ background: "rgba(244,239,231,0.08)", color: "rgba(244,239,231,0.85)", border: "1px solid rgba(244,239,231,0.13)", borderRadius: 11, padding: "7px 12px", fontSize: 14, fontWeight: 700 }}>‹</button>
-              <label style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: onToday ? "rgba(244,239,231,0.08)" : C.gold, color: onToday ? "rgba(244,239,231,0.9)" : C.brown, border: "1px solid " + (onToday ? "rgba(244,239,231,0.13)" : C.gold), borderRadius: 11, padding: "7px 6px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                <span>{onToday ? "Today · " : ""}{boardDateLabel(boardDate)}{onToday ? "" : " · view only"}</span>
-                <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
-                <input
-                  type="date"
-                  value={boardDate}
-                  onChange={(e) => e.target.value && goToDate(e.target.value)}
-                  onClick={(e) => {
-                    // Desktop browsers focus a date input on click but don't open
-                    // the calendar — needs an explicit showPicker() call.
-                    try { e.currentTarget.showPicker?.(); } catch { /* needs gesture / unsupported */ }
-                  }}
-                  style={{ position: "absolute", inset: 0, opacity: 0, width: "100%", height: "100%", cursor: "pointer" }}
-                />
-              </label>
+              <div style={{ flex: 1, position: "relative" }}>
+                <button
+                  onClick={() => { setCalCursor(startOfMonthStr(boardDate)); setShowCal(true); }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: onToday ? "rgba(244,239,231,0.08)" : C.gold, color: onToday ? "rgba(244,239,231,0.9)" : C.brown, border: "1px solid " + (onToday ? "rgba(244,239,231,0.13)" : C.gold), borderRadius: 11, padding: "7px 6px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                >
+                  <span>{onToday ? "Today · " : ""}{boardDateLabel(boardDate)}{onToday ? "" : " · view only"}</span>
+                  <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
+                </button>
+                {showCal && calCursor && (
+                  <>
+                    <div onClick={() => setShowCal(false)} style={{ position: "fixed", inset: 0, zIndex: 90 }} />
+                    <div style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, right: 0, zIndex: 91, background: C.paper, border: "1px solid " + C.line, borderRadius: 14, boxShadow: "0 10px 30px rgba(42,36,32,0.25)", padding: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                        <button onClick={() => setCalCursor(shiftMonthStr(calCursor, -1))} style={{ border: "none", background: "transparent", fontSize: 16, fontWeight: 700, color: C.ink, padding: 4, cursor: "pointer" }}>‹</button>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: C.ink, fontFamily: "Fraunces, serif" }}>{monthLabel(calCursor)}</span>
+                        <button onClick={() => setCalCursor(shiftMonthStr(calCursor, 1))} style={{ border: "none", background: "transparent", fontSize: 16, fontWeight: 700, color: C.ink, padding: 4, cursor: "pointer" }}>›</button>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, marginBottom: 4 }}>
+                        {["M", "T", "W", "T", "F", "S", "S"].map((l, i) => (
+                          <div key={i} style={{ textAlign: "center", fontSize: 10, fontWeight: 700, color: C.slate }}>{l}</div>
+                        ))}
+                      </div>
+                      {buildMonthGrid(calCursor).map((week, wi) => (
+                        <div key={wi} style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+                          {week.map((cellDate, ci) => {
+                            if (!cellDate) return <div key={ci} />;
+                            const isToday = cellDate === todayStr;
+                            const isSelected = cellDate === boardDate;
+                            return (
+                              <button
+                                key={ci}
+                                onClick={() => { goToDate(cellDate); setShowCal(false); }}
+                                style={{
+                                  border: "none",
+                                  background: isSelected ? C.gold : "transparent",
+                                  color: isSelected ? C.brown : (isToday ? C.goldDeep : C.ink),
+                                  fontWeight: isSelected || isToday ? 700 : 500,
+                                  borderRadius: 8,
+                                  padding: "6px 0",
+                                  fontSize: 12,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {Number(cellDate.slice(8, 10))}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ))}
+                      {!onToday && (
+                        <button
+                          onClick={() => { goToDate(null); setShowCal(false); }}
+                          style={{ marginTop: 8, width: "100%", border: "none", background: C.green, color: "#fff", borderRadius: 8, padding: "7px 0", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                        >
+                          Jump to Today
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
               <button onClick={() => goToDate(shiftDateStr(boardDate, 1))} style={{ background: "rgba(244,239,231,0.08)", color: "rgba(244,239,231,0.85)", border: "1px solid rgba(244,239,231,0.13)", borderRadius: 11, padding: "7px 12px", fontSize: 14, fontWeight: 700 }}>›</button>
               {!onToday && (
                 <button onClick={() => goToDate(null)} style={{ background: C.green, color: "#fff", border: "none", borderRadius: 11, padding: "7px 10px", fontSize: 11, fontWeight: 700 }}>Today</button>

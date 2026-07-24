@@ -48,8 +48,8 @@ const TABS = [{ k: "today", l: "Today" }, { k: "specs", l: "Groom Specs" }, { k:
 
 const TAGS = [
   { key: "cut", label: "Cut", hint: "Today's change to the cut", color: C.gold },
-  { key: "watch", label: "Watch", hint: "Anything to be careful of", color: C.rose },
   { key: "svc", label: "Service", hint: "Add-on or change", color: C.green },
+  { key: "watch", label: "Watch", hint: "Anything to be careful of", color: C.rose },
 ];
 
 const SPECS = [

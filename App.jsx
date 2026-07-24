@@ -1099,7 +1099,7 @@ export default function App() {
       {showOwner && isOwner && (
         <Sheet onClose={() => setShowOwner(false)}>
           <div style={{ fontFamily: "Fraunces, serif", fontSize: 24, fontWeight: 600 }}>Owner dashboard</div>
-          <Hint>Revenue is an estimate from Square catalog prices — not the books.</Hint>
+          <Hint>Revenue is pulled from Square's completed sales for the day.</Hint>
           {ownerLoading && (
             <div style={{ padding: 24, textAlign: "center", color: C.slate, fontSize: 13 }}>Loading…</div>
           )}

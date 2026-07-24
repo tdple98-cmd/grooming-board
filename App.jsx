@@ -24,6 +24,10 @@ function boardDateLabel(dateStr) {
   });
 }
 
+function moneyFmt(cents) {
+  return "$" + Math.round((cents || 0) / 100).toLocaleString("en-AU");
+}
+
 function startOfMonthStr(dateStr) {
   return dateStr.slice(0, 7) + "-01";
 }
@@ -245,6 +249,8 @@ function elapsed(since) {
 
 export default function App() {
   const { session, profile, loading, needsPassword, signOut } = useAuth();
+  const ownerEmail = (import.meta.env.VITE_OWNER_EMAIL || "").trim().toLowerCase();
+  const isOwner = Boolean(ownerEmail) && (session?.user?.email || "").trim().toLowerCase() === ownerEmail;
   const {
     dogs,
     dueDogs,
@@ -285,6 +291,12 @@ export default function App() {
   const [rosterData, setRosterData] = useState(null);
   const [rosterError, setRosterError] = useState("");
   const [rosterLoading, setRosterLoading] = useState(false);
+  const [showOwner, setShowOwner] = useState(false);
+  const [ownerData, setOwnerData] = useState(null);
+  const [ownerError, setOwnerError] = useState("");
+  const [ownerLoading, setOwnerLoading] = useState(false);
+  const [ownerSending, setOwnerSending] = useState(false);
+  const [ownerSentNote, setOwnerSentNote] = useState("");
   const [tab, setTab] = useState("today");
   const [menuId, setMenuId] = useState(null);
   const [now, setNow] = useState(new Date());
@@ -513,6 +525,30 @@ export default function App() {
             </button>
             <button onClick={() => setShowHelp(true)} title="Help" style={{ background: "rgba(244,239,231,0.1)", border: "1px solid rgba(244,239,231,0.25)", color: C.cream, borderRadius: 11, width: 38, height: 38, fontSize: 16, fontWeight: 700 }}>?</button>
             <button onClick={() => setShowSettings(true)} title="Settings" style={{ background: "rgba(244,239,231,0.1)", border: "1px solid rgba(244,239,231,0.25)", color: C.cream, borderRadius: 11, width: 38, height: 38, fontSize: 16 }}>⚙</button>
+            {isOwner && (
+              <button
+                onClick={async () => {
+                  setShowOwner(true);
+                  setOwnerLoading(true);
+                  setOwnerError("");
+                  setOwnerSentNote("");
+                  try {
+                    const res = await fetch("/api/owner/dashboard", { headers: { Authorization: "Bearer " + (session?.access_token || "") } });
+                    const json = await res.json().catch(() => null);
+                    if (!res.ok || !json) throw new Error(json?.error || "Could not load dashboard");
+                    setOwnerData(json);
+                  } catch (e) {
+                    setOwnerError(e.message || "Could not load dashboard");
+                  } finally {
+                    setOwnerLoading(false);
+                  }
+                }}
+                title="Owner dashboard"
+                style={{ background: "rgba(184,149,106,0.25)", border: "1px solid rgba(184,149,106,0.5)", color: C.gold, borderRadius: 11, width: 38, height: 38, fontSize: 16 }}
+              >
+                📊
+              </button>
+            )}
           </div>
         </div>
 
@@ -1056,6 +1092,126 @@ export default function App() {
               </>
             )}
           </div>
+        </Sheet>
+      )}
+
+      {/* ===== OWNER DASHBOARD ===== */}
+      {showOwner && isOwner && (
+        <Sheet onClose={() => setShowOwner(false)}>
+          <div style={{ fontFamily: "Fraunces, serif", fontSize: 24, fontWeight: 600 }}>Owner dashboard</div>
+          <Hint>Revenue is an estimate from Square catalog prices — not the books.</Hint>
+          {ownerLoading && (
+            <div style={{ padding: 24, textAlign: "center", color: C.slate, fontSize: 13 }}>Loading…</div>
+          )}
+          {!ownerLoading && ownerError && (
+            <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: 14, color: C.rose, fontSize: 13 }}>{ownerError}</div>
+          )}
+          {!ownerLoading && !ownerError && ownerData && (
+            <>
+              <SectionLabel>Today · {ownerData.date}</SectionLabel>
+              <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
+                {[
+                  { n: ownerData.today.dogsTotal, l: "Dogs" },
+                  { n: ownerData.today.collected, l: "Picked up" },
+                  { n: ownerData.today.noShows, l: "No-shows" },
+                ].map((g, i) => (
+                  <div key={i} style={{ flex: 1, background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: "10px 4px", textAlign: "center" }}>
+                    <div style={{ fontFamily: "Fraunces, serif", fontSize: 20, fontWeight: 600 }}>{g.n}</div>
+                    <div style={{ fontSize: 9.5, color: C.slate, letterSpacing: 0.5, marginTop: 1, textTransform: "uppercase" }}>{g.l}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: 14, marginTop: 10 }}>
+                <div style={{ fontSize: 12, color: C.slate, marginBottom: 2 }}>Revenue estimate</div>
+                <div style={{ fontFamily: "Fraunces, serif", fontSize: 26, fontWeight: 600, color: C.goldDeep }}>{moneyFmt(ownerData.today.revenueCents)}</div>
+                {ownerData.today.revenueKnownCount < ownerData.today.revenueTotalCount && (
+                  <div style={{ fontSize: 11.5, color: C.slate, marginTop: 2 }}>Priced {ownerData.today.revenueKnownCount} of {ownerData.today.revenueTotalCount} dogs</div>
+                )}
+              </div>
+
+              <SectionLabel style={{ marginTop: 14 }}>Groomer utilisation</SectionLabel>
+              {ownerData.today.perGroomer.length ? (
+                ownerData.today.perGroomer.map((g) => (
+                  <div key={g.groomer} style={{ display: "flex", justifyContent: "space-between", background: C.paper, border: "1px solid " + C.line, borderRadius: 12, padding: "10px 14px", marginTop: 6, fontSize: 13.5 }}>
+                    <span style={{ fontWeight: 600 }}>{g.groomer}</span>
+                    <span style={{ color: C.slate }}>{g.dogs} dog{g.dogs === 1 ? "" : "s"} · {moneyFmt(g.revenueCents)}</span>
+                  </div>
+                ))
+              ) : (
+                <div style={{ fontSize: 13, color: C.slate, marginTop: 4 }}>No groomer assigned yet today</div>
+              )}
+
+              <div style={{ background: "rgba(198,138,62,0.1)", border: "1px solid rgba(198,138,62,0.3)", borderRadius: 13, padding: 14, marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 13.5, fontWeight: 600, color: C.amber }}>Due to rebook</span>
+                <span style={{ fontFamily: "Fraunces, serif", fontSize: 20, fontWeight: 700, color: C.amber }}>{ownerData.dueToRebookCount}</span>
+              </div>
+
+              <SectionLabel style={{ marginTop: 14 }}>Trends · last {ownerData.trends.windowDays} days</SectionLabel>
+              <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: 14 }}>
+                <div style={{ fontSize: 12, color: C.slate, marginBottom: 6 }}>Busiest days (avg dogs)</div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {ownerData.trends.byWeekday.map((w) => (
+                    <div key={w.weekday} style={{ flex: 1, textAlign: "center" }}>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>{w.avgDogs}</div>
+                      <div style={{ fontSize: 9.5, color: C.slate }}>{w.weekday}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: 14, marginTop: 8 }}>
+                <div style={{ fontSize: 12, color: C.slate, marginBottom: 6 }}>Top services</div>
+                {ownerData.trends.topServices.map((s) => (
+                  <div key={s.service} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
+                    <span>{s.service}</span>
+                    <span style={{ color: C.slate }}>{s.count}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: 14, marginTop: 8, display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13 }}>Repeat-customer rate</span>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>{Math.round(ownerData.trends.repeatRate * 100)}%</span>
+              </div>
+
+              <SectionLabel style={{ marginTop: 14 }}>Daily digest</SectionLabel>
+              {ownerData.lastDigest ? (
+                <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: 14, fontSize: 13, whiteSpace: "pre-line", lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 11, color: C.slate, marginBottom: 4 }}>Last sent · {ownerData.lastDigest.date}</div>
+                  {ownerData.lastDigest.digest_text}
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: C.slate }}>No digest sent yet — first one goes out tonight, or send one now below.</div>
+              )}
+              <button
+                disabled={ownerSending}
+                onClick={async () => {
+                  setOwnerSending(true);
+                  setOwnerSentNote("");
+                  try {
+                    const res = await fetch("/api/owner/text-digest", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") },
+                      body: JSON.stringify({ date: ownerData.date }),
+                    });
+                    const json = await res.json().catch(() => null);
+                    if (!res.ok || !json) throw new Error(json?.error || "Could not send");
+                    setOwnerSentNote(json.smsSent ? "Texted just now." : "Saved, but the text didn't send — check the reply-engine is reachable.");
+                    setOwnerData((prev) => prev && { ...prev, lastDigest: { date: json.stats.date, digest_text: json.text } });
+                  } catch (e) {
+                    setOwnerSentNote(e.message || "Could not send");
+                  } finally {
+                    setOwnerSending(false);
+                  }
+                }}
+                style={{ width: "100%", background: C.brown, color: C.cream, border: "none", borderRadius: 14, padding: "13px", fontSize: 14, fontWeight: 700, marginTop: 8, opacity: ownerSending ? 0.6 : 1 }}
+              >
+                {ownerSending ? "Sending…" : "Text me this now"}
+              </button>
+              {ownerSentNote && (
+                <div style={{ fontSize: 12.5, color: C.slate, marginTop: 6, textAlign: "center" }}>{ownerSentNote}</div>
+              )}
+            </>
+          )}
+          <button onClick={() => setShowOwner(false)} style={{ width: "100%", background: "rgba(42,36,32,0.06)", color: C.brown, border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 10 }}>Done</button>
         </Sheet>
       )}
 

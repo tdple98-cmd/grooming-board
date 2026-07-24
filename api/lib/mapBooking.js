@@ -266,6 +266,20 @@ export function mapSquareBookingToRows(
   }
   const serviceName = segmentNames.join(" + ") || "Grooming appointment";
 
+  // Sum each segment's catalog price (Square gives cents already) — a dashboard revenue
+  // ESTIMATE, not accounting: split evenly across pets on a true multi-pet single booking,
+  // and doesn't reflect discounts/surcharges applied at checkout. Square/Xero stay the ledger.
+  let totalPriceCents = 0;
+  let sawPrice = false;
+  for (const seg of segments) {
+    const variation = seg.service_variation_id ? catalogById[seg.service_variation_id] : null;
+    const amount = variation?.item_variation_data?.price_money?.amount;
+    if (amount != null) {
+      totalPriceCents += Number(amount);
+      sawPrice = true;
+    }
+  }
+
   const teamMember = primary.team_member_id ? teamById[primary.team_member_id] : null;
   const groomer = teamMember?.given_name || teamMember?.family_name || "";
 
@@ -309,11 +323,14 @@ export function mapSquareBookingToRows(
     today_notes: { cut: "", watch: "", svc: "" },
   };
 
+  const priceCentsPerPet = sawPrice ? Math.round(totalPriceCents / petNames.length) : null;
+
   return petNames.map((name, index) => ({
     dog: { ...baseDog, name },
     appointment: {
       ...baseAppointment,
       square_booking_id: squareBookingKey(booking.id, index, petNames.length),
+      price_cents: priceCentsPerPet,
     },
     squareStatus: booking.status,
   }));

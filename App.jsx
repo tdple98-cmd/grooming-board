@@ -281,6 +281,10 @@ export default function App() {
   const [filter, setFilter] = useState("all");
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showRoster, setShowRoster] = useState(false);
+  const [rosterData, setRosterData] = useState(null);
+  const [rosterError, setRosterError] = useState("");
+  const [rosterLoading, setRosterLoading] = useState(false);
   const [tab, setTab] = useState("today");
   const [menuId, setMenuId] = useState(null);
   const [now, setNow] = useState(new Date());
@@ -486,6 +490,27 @@ export default function App() {
             <div style={{ fontSize: 12, color: "rgba(244,239,231,0.65)", marginTop: 2 }}>{melDate} · <span style={{ color: C.gold, fontWeight: 600 }}>{melTime}</span></div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={async () => {
+                setShowRoster(true);
+                setRosterLoading(true);
+                setRosterError("");
+                try {
+                  const res = await fetch("/api/roster", { headers: { Authorization: "Bearer " + (session?.access_token || "") } });
+                  const json = await res.json().catch(() => null);
+                  if (!res.ok || !json) throw new Error(json?.error || "Could not load roster");
+                  setRosterData(json);
+                } catch (e) {
+                  setRosterError(e.message || "Could not load roster");
+                } finally {
+                  setRosterLoading(false);
+                }
+              }}
+              title="Roster"
+              style={{ background: "rgba(244,239,231,0.1)", border: "1px solid rgba(244,239,231,0.25)", color: C.cream, borderRadius: 11, width: 38, height: 38, fontSize: 16 }}
+            >
+              👥
+            </button>
             <button onClick={() => setShowHelp(true)} title="Help" style={{ background: "rgba(244,239,231,0.1)", border: "1px solid rgba(244,239,231,0.25)", color: C.cream, borderRadius: 11, width: 38, height: 38, fontSize: 16, fontWeight: 700 }}>?</button>
             <button onClick={() => setShowSettings(true)} title="Settings" style={{ background: "rgba(244,239,231,0.1)", border: "1px solid rgba(244,239,231,0.25)", color: C.cream, borderRadius: 11, width: 38, height: 38, fontSize: 16 }}>⚙</button>
           </div>
@@ -1031,6 +1056,50 @@ export default function App() {
               </>
             )}
           </div>
+        </Sheet>
+      )}
+
+      {/* ===== ROSTER ===== */}
+      {showRoster && (
+        <Sheet onClose={() => setShowRoster(false)}>
+          <div style={{ fontFamily: "Fraunces, serif", fontSize: 24, fontWeight: 600 }}>Today's roster</div>
+          <Hint>Who's on today — set each night from the owner's roster.</Hint>
+          {rosterLoading && (
+            <div style={{ padding: 24, textAlign: "center", color: C.slate, fontSize: 13 }}>Loading…</div>
+          )}
+          {!rosterLoading && rosterError && (
+            <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: 14, color: C.rose, fontSize: 13 }}>{rosterError}</div>
+          )}
+          {!rosterLoading && !rosterError && rosterData && (
+            <>
+              {rosterData.isDefault && (
+                <div style={{ background: "rgba(198,138,62,0.1)", border: "1px solid rgba(198,138,62,0.3)", borderRadius: 13, padding: 12, marginBottom: 12, fontSize: 12.5, color: C.amber }}>
+                  No roster set for today yet — this list may not be final.
+                </div>
+              )}
+              {[
+                { label: "Groomers", key: "groomers", icon: "✂" },
+                { label: "Bathers", key: "bathers", icon: "🛁" },
+              ].map((section) => (
+                <div key={section.key} style={{ marginBottom: 14 }}>
+                  <SectionLabel>{section.icon} {section.label}</SectionLabel>
+                  {rosterData[section.key]?.length ? (
+                    rosterData[section.key].map((p) => (
+                      <div key={p.id} style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 12, padding: "11px 14px", marginTop: 6, fontSize: 14, fontWeight: 600 }}>{p.name}</div>
+                    ))
+                  ) : (
+                    <div style={{ fontSize: 13, color: C.slate, marginTop: 4 }}>None rostered</div>
+                  )}
+                </div>
+              ))}
+              {rosterData.ownerIn && (
+                <div style={{ background: "rgba(94,124,90,0.1)", border: "1px solid rgba(94,124,90,0.3)", borderRadius: 12, padding: "11px 14px", fontSize: 13.5, fontWeight: 600, color: C.green }}>
+                  Thanh is in today too
+                </div>
+              )}
+            </>
+          )}
+          <button onClick={() => setShowRoster(false)} style={{ width: "100%", background: C.brown, color: C.cream, border: "none", borderRadius: 14, padding: "15px", fontSize: 15, fontWeight: 700, marginTop: 18 }}>Done</button>
         </Sheet>
       )}
 

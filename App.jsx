@@ -506,17 +506,18 @@ export default function App() {
           ))}
         </div>
 
-        {/* board mode + filters */}
-        <div style={{ display: "flex", gap: 6, marginTop: 13 }}>
-          <button
-            onClick={() => switchBoardMode("today")}
-            style={{ flex: 1, background: boardMode === "today" ? C.gold : "rgba(244,239,231,0.08)", color: boardMode === "today" ? C.brown : "rgba(244,239,231,0.8)", border: "1px solid " + (boardMode === "today" ? C.gold : "rgba(244,239,231,0.13)"), borderRadius: 11, padding: "7px 2px", fontSize: 10.5, fontWeight: 600 }}
-          >
-            Today
-          </button>
-          {/* "Due to rebook" tab hidden from staff nav (24 Jul) — SHOW_DUE_TO_REBOOK flips it back;
-              switchBoardMode("due"), dueDogs, and lib/dueToRebook.js are untouched. */}
-          {SHOW_DUE_TO_REBOOK && (
+        {/* Board-mode tab row hidden (24 Jul) — with "Due to rebook" off, "Today" was the
+            only mode left and duplicated the date-nav row's own Today button below.
+            switchBoardMode("today"/"due") and boardMode still drive the app underneath;
+            flip SHOW_DUE_TO_REBOOK back on and restore this row together to bring both back. */}
+        {SHOW_DUE_TO_REBOOK && (
+          <div style={{ display: "flex", gap: 6, marginTop: 13 }}>
+            <button
+              onClick={() => switchBoardMode("today")}
+              style={{ flex: 1, background: boardMode === "today" ? C.gold : "rgba(244,239,231,0.08)", color: boardMode === "today" ? C.brown : "rgba(244,239,231,0.8)", border: "1px solid " + (boardMode === "today" ? C.gold : "rgba(244,239,231,0.13)"), borderRadius: 11, padding: "7px 2px", fontSize: 10.5, fontWeight: 600 }}
+            >
+              Today
+            </button>
             <button
               onClick={() => switchBoardMode("due")}
               style={{ flex: 1, background: boardMode === "due" ? C.gold : "rgba(244,239,231,0.08)", color: boardMode === "due" ? C.brown : "rgba(244,239,231,0.8)", border: "1px solid " + (boardMode === "due" ? C.gold : "rgba(244,239,231,0.13)"), borderRadius: 11, padding: "7px 2px", fontSize: 10.5, fontWeight: 600, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}
@@ -524,8 +525,8 @@ export default function App() {
               <span>Due to rebook</span>
               <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "Fraunces, serif" }}>{dueDogs.length}</span>
             </button>
-          )}
-        </div>
+          </div>
+        )}
         {boardMode === "today" && (() => {
           const todayStr = todayMelbourneDateString();
           const onToday = boardDate === todayStr;

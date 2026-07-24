@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { requireOwner } from "../lib/ownerAuth.js";
-import { computeTodayStats, computeTrends, computeDueToRebookCount } from "../lib/ownerStats.js";
+import { computeTodayStats, computeTrends, computeDueToRebookCount, computeSquareRevenue } from "../lib/ownerStats.js";
 import { todayMelbourneDateString } from "../lib/melbourne.js";
 import { loadEnvFiles } from "../lib/loadEnv.mjs";
 
@@ -12,6 +12,8 @@ export default async function handler(req, res) {
   const supabaseUrl = (process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "").trim();
   const anonKey = (process.env.VITE_SUPABASE_ANON_KEY || "").trim();
   const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  const squareAccessToken = (process.env.SQUARE_ACCESS_TOKEN || "").trim();
+  const squareEnvironment = process.env.SQUARE_ENVIRONMENT || "sandbox";
   if (!supabaseUrl || !anonKey || !serviceRoleKey) {
     return res.status(500).json({ error: "Server not configured" });
   }
@@ -27,7 +29,7 @@ export default async function handler(req, res) {
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   try {
-    const [today, trends, dueToRebookCount, lastDigest] = await Promise.all([
+    const [today, trends, dueToRebookCount, lastDigest, squareRevenue] = await Promise.all([
       computeTodayStats(supabase, dateStr),
       computeTrends(supabase, dateStr),
       computeDueToRebookCount(supabase, dateStr),
@@ -38,8 +40,11 @@ export default async function handler(req, res) {
         .limit(1)
         .maybeSingle()
         .then((r) => r.data || null),
+      squareAccessToken
+        ? computeSquareRevenue({ environment: squareEnvironment, accessToken: squareAccessToken }, dateStr)
+        : { ok: false, error: "Square not configured" },
     ]);
-    return res.status(200).json({ date: dateStr, today, trends, dueToRebookCount, lastDigest });
+    return res.status(200).json({ date: dateStr, today, trends, dueToRebookCount, lastDigest, squareRevenue });
   } catch (err) {
     console.error("Owner dashboard error:", err);
     return res.status(500).json({ error: "Could not load dashboard" });

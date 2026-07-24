@@ -1,12 +1,18 @@
-import { computeTodayStats, computeDueToRebookCount, formatDigestText } from "./ownerStats.js";
+import { computeTodayStats, computeDueToRebookCount, computeSquareRevenue, formatDigestText } from "./ownerStats.js";
 
 /** Shared by the manual "text me this" button and the nightly cron so both produce identical text. */
 export async function buildAndDeliverDigest(supabase, dateStr, { sendSms }) {
-  const [today, dueToRebookCount] = await Promise.all([
+  const squareAccessToken = (process.env.SQUARE_ACCESS_TOKEN || "").trim();
+  const squareEnvironment = process.env.SQUARE_ENVIRONMENT || "sandbox";
+
+  const [today, dueToRebookCount, squareRevenue] = await Promise.all([
     computeTodayStats(supabase, dateStr),
     computeDueToRebookCount(supabase, dateStr),
+    squareAccessToken
+      ? computeSquareRevenue({ environment: squareEnvironment, accessToken: squareAccessToken }, dateStr)
+      : { ok: false, error: "Square not configured" },
   ]);
-  const stats = { date: dateStr, today, dueToRebookCount };
+  const stats = { date: dateStr, today, dueToRebookCount, squareRevenue };
   const text = formatDigestText(stats);
 
   let smsSent = false;

@@ -274,6 +274,54 @@ export async function batchListCustomerCustomAttributes({ environment, accessTok
   return map;
 }
 
+/**
+ * COMPLETED orders closed within [startAt, endAt) at a location — the same data Square's own
+ * Sales Report is built from, so revenue matches what's on the owner's phone. Paginated.
+ */
+export async function searchOrdersForDay({ environment, accessToken, locationId, startAt, endAt }) {
+  const orders = [];
+  let cursor;
+  do {
+    const body = {
+      location_ids: [locationId],
+      query: {
+        filter: {
+          date_time_filter: { closed_at: { start_at: startAt, end_at: endAt } },
+          state_filter: { states: ["COMPLETED"] },
+        },
+        sort: { sort_field: "CLOSED_AT", sort_order: "ASC" },
+      },
+      limit: 200,
+      ...(cursor ? { cursor } : {}),
+    };
+    const data = await squareRequest("/v2/orders/search", { environment, accessToken, method: "POST", body });
+    if (data.orders?.length) orders.push(...data.orders);
+    cursor = data.cursor;
+  } while (cursor);
+  return orders;
+}
+
+/**
+ * Sum a day's orders into gross/net/discount/return/tax cents.
+ * gross = total_money (post-discount, pre-return — matches Square's "Gross Sales").
+ * net   = net_amounts.total_money (gross minus returns — matches Square's "Net Sales").
+ */
+export function summarizeOrdersRevenue(orders) {
+  let grossCents = 0;
+  let netCents = 0;
+  let discountCents = 0;
+  let returnCents = 0;
+  let taxCents = 0;
+  for (const o of orders || []) {
+    grossCents += Number(o.total_money?.amount || 0);
+    netCents += Number(o.net_amounts?.total_money?.amount ?? o.total_money?.amount ?? 0);
+    discountCents += Number(o.total_discount_money?.amount || 0);
+    returnCents += Number(o.return_amounts?.total_money?.amount || 0);
+    taxCents += Number(o.total_tax_money?.amount || 0);
+  }
+  return { grossCents, netCents, discountCents, returnCents, taxCents, orderCount: (orders || []).length };
+}
+
 /** Write staff-corrected pet name back to Square dog_name custom attribute. */
 export async function upsertCustomerCustomAttribute({
   environment,

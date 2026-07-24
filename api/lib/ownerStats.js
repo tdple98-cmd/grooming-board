@@ -1,8 +1,34 @@
 import { computeDueToRebook } from "../../lib/dueToRebook.js";
+import { searchOrdersForDay, summarizeOrdersRevenue, listLocations } from "./square.js";
+import { melbourneDayBounds } from "./melbourne.js";
 
 /**
- * Revenue here is an ESTIMATE built from Square catalog prices captured at sync time — it ignores
- * discounts/surcharges applied at checkout and is not the books. Square/Xero stay the ledger.
+ * Real revenue from Square's own completed Orders for the day — the same data Square's Sales
+ * Report is built from, so this matches what's on the owner's phone (gross/net/discounts/returns).
+ * Returns { ok: false, error } instead of a number if Square can't be reached, rather than guess.
+ */
+export async function computeSquareRevenue({ environment, accessToken, locationId }, dateStr) {
+  try {
+    const resolvedLocationId = locationId || (await listLocations({ environment, accessToken }))[0]?.id;
+    if (!resolvedLocationId) return { ok: false, error: "No Square location found" };
+
+    const { startAtMin, startAtMax } = melbourneDayBounds(dateStr);
+    const orders = await searchOrdersForDay({
+      environment,
+      accessToken,
+      locationId: resolvedLocationId,
+      startAt: startAtMin,
+      endAt: startAtMax,
+    });
+    return { ok: true, ...summarizeOrdersRevenue(orders) };
+  } catch (err) {
+    return { ok: false, error: err.message || "Square orders lookup failed" };
+  }
+}
+
+/**
+ * Dog counts, no-show rate, and groomer WORKLOAD (dog count; $ here is a catalog-price estimate
+ * for relative comparison only, not real money — computeSquareRevenue is the accurate figure).
  */
 export async function computeTodayStats(supabase, dateStr) {
   const { data: rows, error } = await supabase
@@ -21,15 +47,12 @@ export async function computeTodayStats(supabase, dateStr) {
   const grooming = all.filter((r) => r.status === "grooming").length;
   const ready = all.filter((r) => r.status === "ready").length;
 
-  const revenueCents = active.reduce((sum, r) => sum + (r.price_cents || 0), 0);
-  const revenueKnownCount = active.filter((r) => r.price_cents != null).length;
-
   const byGroomer = new Map();
   for (const r of active) {
     if (!r.groomer) continue;
-    const cur = byGroomer.get(r.groomer) || { groomer: r.groomer, dogs: 0, revenueCents: 0 };
+    const cur = byGroomer.get(r.groomer) || { groomer: r.groomer, dogs: 0, estimatedRevenueCents: 0 };
     cur.dogs += 1;
-    cur.revenueCents += r.price_cents || 0;
+    cur.estimatedRevenueCents += r.price_cents || 0;
     byGroomer.set(r.groomer, cur);
   }
   const perGroomer = [...byGroomer.values()].sort((a, b) => b.dogs - a.dogs);
@@ -44,9 +67,6 @@ export async function computeTodayStats(supabase, dateStr) {
     collected,
     noShows,
     noShowRate: dogsTotal ? noShows / dogsTotal : 0,
-    revenueCents,
-    revenueKnownCount,
-    revenueTotalCount: active.length,
     perGroomer,
   };
 }
@@ -122,10 +142,13 @@ function money(cents) {
 
 export function formatDigestText(stats) {
   const t = stats.today;
+  const rev = stats.squareRevenue;
   const lines = [
     `TPS ${stats.date} wrap-up:`,
     `${t.dogsTotal} dogs · ${t.collected} picked up · ${t.noShows} no-show${t.noShows === 1 ? "" : "s"}`,
-    `Revenue est: ${money(t.revenueCents)}${t.revenueKnownCount < t.revenueTotalCount ? ` (${t.revenueKnownCount}/${t.revenueTotalCount} priced)` : ""}`,
+    rev?.ok
+      ? `Net sales: ${money(rev.netCents)}${rev.returnCents ? ` (gross ${money(rev.grossCents)})` : ""}`
+      : "Revenue: unavailable (Square lookup failed)",
   ];
   if (t.perGroomer.length) {
     lines.push(t.perGroomer.map((g) => `${g.groomer} ${g.dogs}`).join(" · "));

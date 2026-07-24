@@ -1122,19 +1122,27 @@ export default function App() {
                 ))}
               </div>
               <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: 14, marginTop: 10 }}>
-                <div style={{ fontSize: 12, color: C.slate, marginBottom: 2 }}>Revenue estimate</div>
-                <div style={{ fontFamily: "Fraunces, serif", fontSize: 26, fontWeight: 600, color: C.goldDeep }}>{moneyFmt(ownerData.today.revenueCents)}</div>
-                {ownerData.today.revenueKnownCount < ownerData.today.revenueTotalCount && (
-                  <div style={{ fontSize: 11.5, color: C.slate, marginTop: 2 }}>Priced {ownerData.today.revenueKnownCount} of {ownerData.today.revenueTotalCount} dogs</div>
+                <div style={{ fontSize: 12, color: C.slate, marginBottom: 2 }}>Revenue · from Square's completed sales</div>
+                {ownerData.squareRevenue?.ok ? (
+                  <>
+                    <div style={{ fontFamily: "Fraunces, serif", fontSize: 26, fontWeight: 600, color: C.goldDeep }}>{moneyFmt(ownerData.squareRevenue.netCents)}</div>
+                    <div style={{ fontSize: 11.5, color: C.slate, marginTop: 2 }}>
+                      Net sales · {ownerData.squareRevenue.orderCount} sale{ownerData.squareRevenue.orderCount === 1 ? "" : "s"}
+                      {ownerData.squareRevenue.returnCents > 0 && ` · gross ${moneyFmt(ownerData.squareRevenue.grossCents)}, returns ${moneyFmt(ownerData.squareRevenue.returnCents)}`}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 13, color: C.rose }}>Unavailable — {ownerData.squareRevenue?.error || "Square lookup failed"}</div>
                 )}
               </div>
 
-              <SectionLabel style={{ marginTop: 14 }}>Groomer utilisation</SectionLabel>
+              <SectionLabel style={{ marginTop: 14 }}>Groomer workload</SectionLabel>
+              <Hint>Dog count is real; the $ next to each name is a catalog-price estimate, not actual takings.</Hint>
               {ownerData.today.perGroomer.length ? (
                 ownerData.today.perGroomer.map((g) => (
                   <div key={g.groomer} style={{ display: "flex", justifyContent: "space-between", background: C.paper, border: "1px solid " + C.line, borderRadius: 12, padding: "10px 14px", marginTop: 6, fontSize: 13.5 }}>
                     <span style={{ fontWeight: 600 }}>{g.groomer}</span>
-                    <span style={{ color: C.slate }}>{g.dogs} dog{g.dogs === 1 ? "" : "s"} · {moneyFmt(g.revenueCents)}</span>
+                    <span style={{ color: C.slate }}>{g.dogs} dog{g.dogs === 1 ? "" : "s"} · ~{moneyFmt(g.estimatedRevenueCents)}</span>
                   </div>
                 ))
               ) : (

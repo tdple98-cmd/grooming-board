@@ -531,15 +531,21 @@ export async function syncSquareToSupabase({
       syncDates[0],
       windowEnd
     );
-    purgeResult.deduped = await dedupeDuplicateSlots(
-      supabase,
-      syncDates[0],
-      windowEnd,
-      squareBookingIds
-    );
-    purgeResult.removedAppointments += purgeResult.deduped.removedAppointments;
-    purgeResult.removedDogs += purgeResult.deduped.removedDogs;
   }
+  // Collapsing exact duplicate square_booking_id / slot groups is safe regardless of sync mode —
+  // unlike stale-purge (which deletes rows Square no longer returns and could wrongly drop
+  // legitimate rows from a partial/paginated history fetch), dedupe only ever removes an
+  // untouched copy of a row that's also present under the same key. History-mode syncs (the
+  // 12-month backfill included) previously skipped this entirely because it lived inside the
+  // `if (purge)` branch, letting duplicates accumulate silently across repeated backfill runs.
+  purgeResult.deduped = await dedupeDuplicateSlots(
+    supabase,
+    syncDates[0],
+    windowEnd,
+    squareBookingIds
+  );
+  purgeResult.removedAppointments += purgeResult.deduped.removedAppointments;
+  purgeResult.removedDogs += purgeResult.deduped.removedDogs;
 
   if (fetchError) {
     return {

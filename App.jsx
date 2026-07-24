@@ -302,6 +302,7 @@ export default function App() {
   const [now, setNow] = useState(new Date());
   const [showCal, setShowCal] = useState(false);
   const [calCursor, setCalCursor] = useState(null);
+  const [deduping, setDeduping] = useState(false);
   const [petNameDraft, setPetNameDraft] = useState("");
   const [finishingPickup, setFinishingPickup] = useState(false);
 
@@ -1137,7 +1138,11 @@ export default function App() {
               </div>
 
               <SectionLabel style={{ marginTop: 14 }}>Groomer workload</SectionLabel>
-              <Hint>Dog count is real; the $ next to each name is a catalog-price estimate, not actual takings.</Hint>
+              <Hint>
+                {ownerData.today.workloadSource === "roster"
+                  ? "Who's actually rostered today. The $ next to each name is a catalog-price estimate, not actual takings."
+                  : "No roster set for today yet — showing whoever bookings are assigned to instead. The $ is a catalog-price estimate, not actual takings."}
+              </Hint>
               {ownerData.today.perGroomer.length ? (
                 ownerData.today.perGroomer.map((g) => (
                   <div key={g.groomer} style={{ display: "flex", justifyContent: "space-between", background: C.paper, border: "1px solid " + C.line, borderRadius: 12, padding: "10px 14px", marginTop: 6, fontSize: 13.5 }}>
@@ -1149,19 +1154,23 @@ export default function App() {
                 <div style={{ fontSize: 13, color: C.slate, marginTop: 4 }}>No groomer assigned yet today</div>
               )}
 
-              <div style={{ background: "rgba(198,138,62,0.1)", border: "1px solid rgba(198,138,62,0.3)", borderRadius: 13, padding: 14, marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 13.5, fontWeight: 600, color: C.amber }}>Due to rebook</span>
-                <span style={{ fontFamily: "Fraunces, serif", fontSize: 20, fontWeight: 700, color: C.amber }}>{ownerData.dueToRebookCount}</span>
+              <div style={{ background: "rgba(198,138,62,0.1)", border: "1px solid rgba(198,138,62,0.3)", borderRadius: 13, padding: 14, marginTop: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: C.amber }}>Due to rebook</span>
+                  <span style={{ fontFamily: "Fraunces, serif", fontSize: 20, fontWeight: 700, color: C.amber }}>{ownerData.dueToRebookCount}</span>
+                </div>
+                <div style={{ fontSize: 11, color: C.amber, opacity: 0.8, marginTop: 2 }}>Dogs whose groom cycle has passed, last seen within 180 days, with no upcoming booking</div>
               </div>
 
-              <SectionLabel style={{ marginTop: 14 }}>Trends · last {ownerData.trends.windowDays} days</SectionLabel>
+              <SectionLabel style={{ marginTop: 14 }}>Trends</SectionLabel>
               <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: 14 }}>
-                <div style={{ fontSize: 12, color: C.slate, marginBottom: 6 }}>Busiest days (avg dogs)</div>
+                <div style={{ fontSize: 12, color: C.slate, marginBottom: 6 }}>Busiest days (avg dogs) · last {ownerData.trends.windowDays} days</div>
                 <div style={{ display: "flex", gap: 4 }}>
                   {ownerData.trends.byWeekday.map((w) => (
                     <div key={w.weekday} style={{ flex: 1, textAlign: "center" }}>
                       <div style={{ fontSize: 13, fontWeight: 700 }}>{w.avgDogs}</div>
                       <div style={{ fontSize: 9.5, color: C.slate }}>{w.weekday}</div>
+                      <div style={{ fontSize: 8.5, color: C.slate, opacity: 0.7 }}>{w.dayCount}d</div>
                     </div>
                   ))}
                 </div>
@@ -1175,9 +1184,12 @@ export default function App() {
                   </div>
                 ))}
               </div>
-              <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: 14, marginTop: 8, display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 13 }}>Repeat-customer rate</span>
-                <span style={{ fontSize: 13, fontWeight: 700 }}>{Math.round(ownerData.trends.repeatRate * 100)}%</span>
+              <div style={{ background: C.paper, border: "1px solid " + C.line, borderRadius: 13, padding: 14, marginTop: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 13 }}>Repeat-customer rate</span>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>{Math.round(ownerData.trends.repeatRate * 100)}%</span>
+                </div>
+                <div style={{ fontSize: 11, color: C.slate, marginTop: 2 }}>% of dogs seen twice or more in the last {ownerData.trends.repeatWindowDays} days ({ownerData.trends.totalDogs} dogs in window) — a rolling window, not today's number</div>
               </div>
 
               <SectionLabel style={{ marginTop: 14 }}>Daily digest</SectionLabel>
@@ -1317,6 +1329,32 @@ export default function App() {
           </button>
           <div style={{ fontSize: 11.5, color: C.slate, marginBottom: 8, lineHeight: 1.4, textAlign: "center" }}>
             One-off import of the past year&apos;s Square bookings (real customers only) so past days and photo history fill in. Takes a few minutes.
+          </div>
+          <button
+            onClick={async () => {
+              setDeduping(true);
+              setBoardNotice("");
+              try {
+                const res = await fetch("/api/square/dedupe", {
+                  method: "POST",
+                  headers: { Authorization: "Bearer " + (session?.access_token || "") },
+                });
+                const json = await res.json().catch(() => null);
+                if (!res.ok || !json?.ok) throw new Error(json?.error || "Could not clean up duplicates");
+                setBoardNotice(`Removed ${json.removedAppointments} duplicate appointment(s)${json.removedDogs ? ` and ${json.removedDogs} orphaned dog(s)` : ""}.`);
+              } catch (e) {
+                setBoardError(e.message || "Could not clean up duplicates");
+              } finally {
+                setDeduping(false);
+              }
+            }}
+            disabled={deduping || backfilling || syncing}
+            style={{ width: "100%", background: deduping ? C.slate : C.paper, color: deduping ? "#fff" : C.ink, border: "1px solid " + C.line, borderRadius: 14, padding: "12px", fontSize: 13.5, fontWeight: 600, marginBottom: 8 }}
+          >
+            {deduping ? "Cleaning up…" : "Clean up duplicate appointments"}
+          </button>
+          <div style={{ fontSize: 11.5, color: C.slate, marginBottom: 8, lineHeight: 1.4, textAlign: "center" }}>
+            Collapses any duplicate rows across the last year — safe to run any time, reads Supabase only (no Square calls).
           </div>
           <div style={{ fontSize: 12, color: C.slate, marginBottom: 16, lineHeight: 1.35, textAlign: "center" }}>
             {lastSyncedAt

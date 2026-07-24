@@ -168,11 +168,13 @@ export function useBoard(session) {
 
     const { data: appointments, error: apptErr } = await supabase
       .from("appointments")
-      .select("appointment_date, service, dog_id, dogs(*)");
+      .select("appointment_date, service, dog_id, status, dogs(*)");
 
     if (apptErr) throw apptErr;
 
-    const dueEntries = computeDueToRebook(appointments, today);
+    // A no-show never happened — it must not count as the dog's last real groom.
+    const realAppointments = (appointments || []).filter((a) => a.status !== "noshow");
+    const dueEntries = computeDueToRebook(realAppointments, today);
     const dogIds = dueEntries.map((e) => e.dogId);
     const [visitByDog, historyByDog] = await Promise.all([
       fetchLatestVisitsByDog(dogIds),

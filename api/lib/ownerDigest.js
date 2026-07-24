@@ -1,12 +1,14 @@
 import { computeTodayStats, computeDueToRebookCount, computeSquareRevenue, formatDigestText } from "./ownerStats.js";
+import { fetchRosterNames } from "./rosterClient.js";
 
 /** Shared by the manual "text me this" button and the nightly cron so both produce identical text. */
 export async function buildAndDeliverDigest(supabase, dateStr, { sendSms }) {
   const squareAccessToken = (process.env.SQUARE_ACCESS_TOKEN || "").trim();
   const squareEnvironment = process.env.SQUARE_ENVIRONMENT || "sandbox";
+  const rosterNames = await fetchRosterNames(dateStr);
 
   const [today, dueToRebookCount, squareRevenue] = await Promise.all([
-    computeTodayStats(supabase, dateStr),
+    computeTodayStats(supabase, dateStr, rosterNames),
     computeDueToRebookCount(supabase, dateStr),
     squareAccessToken
       ? computeSquareRevenue({ environment: squareEnvironment, accessToken: squareAccessToken }, dateStr)

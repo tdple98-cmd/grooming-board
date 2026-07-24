@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { requireOwner } from "../lib/ownerAuth.js";
 import { computeTodayStats, computeTrends, computeDueToRebookCount, computeSquareRevenue } from "../lib/ownerStats.js";
+import { fetchRosterNames } from "../lib/rosterClient.js";
 import { todayMelbourneDateString } from "../lib/melbourne.js";
 import { loadEnvFiles } from "../lib/loadEnv.mjs";
 
@@ -29,8 +30,9 @@ export default async function handler(req, res) {
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   try {
+    const rosterNames = await fetchRosterNames(dateStr);
     const [today, trends, dueToRebookCount, lastDigest, squareRevenue] = await Promise.all([
-      computeTodayStats(supabase, dateStr),
+      computeTodayStats(supabase, dateStr, rosterNames),
       computeTrends(supabase, dateStr),
       computeDueToRebookCount(supabase, dateStr),
       supabase
